@@ -4,7 +4,6 @@ import { archiveFailure } from "./openspec-archive-policy.mjs";
 export const MIN_ACCEPTANCE_CHECKS = 1;
 export const MAX_ACCEPTANCE_CHECKS = 10;
 export const MIN_IMPLEMENTATION_PROGRESS_ITEMS = 1;
-export const PHASE_FREE_VERSION3_BODY_POLICY = true;
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CHECK_BYTES = 300;
 const genericChecks = [
@@ -190,60 +189,4 @@ export function parseImplementationAcceptanceScenarios(body, version, { allowLeg
 
 export function acceptanceChecklistDigest(checks) {
   return checklistHash(assertAcceptanceScenarios(checks));
-}
-
-const display = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll("`", "\\`");
-const conventionalTitle = /^(?:feature|fix|refactor|docs|test|chore|style|upgrade)(?:\([^\r\n)]*\))?!?:\s*/i;
-function sourceSubject(sourceTitle, fallback) {
-  const title = typeof sourceTitle === "string" ? sourceTitle.trim() : "";
-  return (title.replace(conventionalTitle, "").trim() || fallback).replaceAll(/\s+/g, " ");
-}
-export function acceptancePullTitle(record, sourceTitle) {
-  return `#${record.sourcePr}(accept): ${sourceSubject(sourceTitle, record.change)}`;
-}
-function legacyItems(record, sourceTitle) {
-  const base = `https://github.com/${record.repository}`;
-  const subject = display(sourceSubject(sourceTitle, record.change));
-  const items = [
-    `Review [#${record.sourcePr}: ${subject}](${base}/pull/${record.sourcePr}) and verify the implementation behaves as intended.`,
-    "Confirm the implementation's required CI and recorded evidence match the reviewed result.",
-    ...record.tasks.filter(task => task.completion === "pending")
-      .map(task => `Verify task ${task.id}: ${display(task.text).replaceAll("\n", "<br>")}`),
-    ...(record.review.gaps.length
-      ? record.review.gaps.map(gap => `Resolve or explicitly disposition this known gap: ${display(gap)}`)
-      : ["Confirm there are no unresolved known gaps."]),
-    "Confirm the OpenSpec requirements and synchronization outcome are correct.",
-    "Manually merge this PR to record acceptance; do not enable auto-merge.",
-  ];
-  if (!record.validation) items.splice(1, 0, "Obtain successful required CI for the exact implementation head.");
-  return items;
-}
-
-export function acceptancePullBody(record, sourceTitle) {
-  if (record.version === 1) return legacyItems(record, sourceTitle).map(item => `- [ ] ${item}`).join("\n");
-  const subject = display(sourceSubject(sourceTitle, record.change));
-  const reference = `Implementation: [#${record.sourcePr}: ${subject}](https://github.com/${record.repository}/pull/${record.sourcePr})`;
-  return `${reference}\n\n${assertAcceptanceScenarios(record.acceptanceChecks).map(item => `- [ ] ${display(item)}`).join("\n")}`;
-}
-
-/** Permit checkbox-state edits only; post-merge callers additionally require every item checked. */
-export function verifyAcceptancePullBody(record, sourceTitle, actualBody, { requireComplete = false } = {}) {
-  const expected = acceptancePullBody(record, sourceTitle).split("\n");
-  const actual = normalizedBody(actualBody).split("\n");
-  if (actual.length !== expected.length) throw archiveFailure("acceptance-checklist-mismatch");
-  let complete = true;
-  const checks = [];
-  for (let index = 0; index < expected.length; index += 1) {
-    const expectedItem = /^- \[ \] (.+)$/.exec(expected[index]);
-    if (!expectedItem) {
-      if (actual[index] !== expected[index]) throw archiveFailure("acceptance-checklist-mismatch");
-      continue;
-    }
-    const actualItem = /^- \[([ x])\] (.+)$/.exec(actual[index]);
-    if (!actualItem || actualItem[2] !== expectedItem[1]) throw archiveFailure("acceptance-checklist-mismatch");
-    if (actualItem[1] !== "x") complete = false;
-    checks.push(record.version === 2 ? record.acceptanceChecks[checks.length] : expectedItem[1]);
-  }
-  if (requireComplete && !complete) throw archiveFailure("acceptance-checklist-incomplete");
-  return { complete, checks, bodyDigest: createHash("sha256").update(normalizedBody(actualBody)).digest("hex") };
 }

@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-import { classifyDocumentationAutoMerge } from "./documentation-auto-merge.mjs";
-import { targetBranch } from "./delivery-target.mjs";
-
 export const ARCHIVE_TASKS = Object.freeze({
   recordEvidence: "Record verified implementation acceptance and merge evidence for archive preparation.",
   stageArchive: "Stage and verify delta synchronization and the archive move in an OpenSpec-only candidate.",
@@ -109,61 +105,6 @@ export function parseImplementation(text) {
   return value;
 }
 
-export function parseAcceptance(text) {
-  const value = metadataBlock(text, "openspec-acceptance");
-  if (value === null) return null;
-  object(value, ["version", "change", "headSha", "specBaseSha", "verdict", "implementationComplete", "manualReview", "specSyncReviewed", "evidence"]);
-  requireValue(value.version === 1 && typeof value.change === "string" && CHANGE.test(value.change), "acceptance-identity");
-  requireValue(typeof value.headSha === "string" && SHA.test(value.headSha)
-    && typeof value.specBaseSha === "string" && SHA.test(value.specBaseSha), "acceptance-sha");
-  requireValue(["accepted", "rejected", "revoked"].includes(value.verdict)
-    && typeof value.implementationComplete === "boolean" && typeof value.specSyncReviewed === "boolean"
-    && ["passed", "failed", "pending"].includes(value.manualReview), "acceptance-verdict");
-  boundedText(value.evidence, 8000);
-  requireValue(value.evidence.trim().length > 0, "acceptance-evidence");
-  return value;
-}
-
-export function selectAcceptance(comments, implementation, headSha) {
-  requireValue(Array.isArray(comments) && comments.length <= 1000, "acceptance-comments");
-  const records = [];
-  for (const comment of comments) {
-    const value = parseAcceptance(comment.body ?? "");
-    if (value === null) continue;
-    requireValue(["write", "maintain", "admin"].includes(comment.permission) && comment.user?.type === "User", "acceptance-authority");
-    requireValue(Number.isSafeInteger(comment.id) && comment.id > 0
-      && typeof comment.user.login === "string" && /^[a-zA-Z0-9-]{1,39}$/.test(comment.user.login), "acceptance-source");
-    requireValue(Number.isFinite(Date.parse(comment.created_at))
-      && comment.created_at === comment.updated_at, "acceptance-edited");
-    requireValue(value.change === implementation.change, "acceptance-change");
-    records.push({ value, id: comment.id, author: comment.user.login, createdAt: comment.created_at,
-      bodyDigest: createHash("sha256").update(comment.body).digest("hex") });
-  }
-  const current = records.filter(record => record.value.headSha === headSha);
-  requireValue(current.length === 1, current.length ? "acceptance-conflict" : records.length ? "acceptance-stale-head" : "acceptance-missing");
-  const record = current[0];
-  requireValue(!records.some(other => other !== record && Date.parse(other.createdAt) >= Date.parse(record.createdAt)), "acceptance-conflict");
-  requireValue(record.value.verdict === "accepted" && record.value.implementationComplete
-    && record.value.manualReview === "passed" && record.value.specSyncReviewed, "acceptance-incomplete");
-  return record;
-}
-
-export function assertMergedImplementation(pull, repository, files, { allowDocumentation = false } = {}) {
-  requireValue(typeof repository === "string" && /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository), "repository-identity");
-  requireValue(pull?.merged === true && pull.state === "closed" && pull.draft === false && pull.base?.ref === targetBranch()
-    && pull.base.repo?.full_name === repository && pull.head?.repo?.full_name === repository, "implementation-merge");
-  requireValue(Number.isSafeInteger(pull.number) && pull.number > 0 && SHA.test(pull.head.sha ?? "")
-    && SHA.test(pull.merge_commit_sha ?? "") && Number.isFinite(Date.parse(pull.merged_at)), "implementation-commit");
-  requireValue(Array.isArray(files) && files.length > 0 && files.length === pull.changed_files
-    && files.length <= 3000, "implementation-diff-incomplete");
-  for (const file of files) {
-    requireValue(["added", "modified", "removed", "renamed", "copied", "changed"].includes(file.status), "implementation-file");
-    assertRepositoryPath(file.filename);
-    if (file.status === "renamed") assertRepositoryPath(file.previous_filename);
-  }
-  requireValue(allowDocumentation || !classifyDocumentationAutoMerge(files).eligible, "planning-or-archive-pr");
-}
-
 export function assertRepositoryPath(value) {
   requireValue(typeof value === "string" && value.length > 0 && value.length < 512
     && !/[\\\x00-\x1f\x7f:%]/.test(value)
@@ -204,13 +145,6 @@ export function inspectTasks(text, mapping = {}, { allowIncomplete = false } = {
   const blocked = tasks.filter(task => !task.done && !allowed.has(task.id));
   if (blocked.length && !allowIncomplete) throw archiveFailure("tasks-incomplete", blocked.map(task => task.id).join(","));
   return tasks;
-}
-
-export function completePreparationTask(text, mapping, kind) {
-  const tasks = inspectTasks(text, mapping);
-  const id = mapping[kind];
-  if (!id || tasks.find(task => task.id === id)?.done) return text;
-  return text.replace(`- [ ] ${id} ${ARCHIVE_TASKS[kind]}`, `- [x] ${id} ${ARCHIVE_TASKS[kind]}`);
 }
 
 export function archivePaths(change, date, capabilities) {

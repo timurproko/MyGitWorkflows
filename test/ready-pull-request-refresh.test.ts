@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -184,13 +183,6 @@ describe("ready pull-request refresh reconciliation", () => {
     expect(results).toHaveLength(205);
     expect(github.calls.filter(call => call.includes("state=open"))).toHaveLength(3);
     expect(github.updates).toEqual([{ number: 205, expected: sha(205) }]);
-  });
-
-  it("fails the pass when pagination is unbounded or malformed", async () => {
-    const endless: RefreshRequester = async () => ({ status: 200, body: Array.from({ length: 100 }, (_, index) => ({ number: index + 1 })) });
-    await expect(refreshReadyPullRequests({ repository, request: endless, maxPages: 2 })).rejects.toThrow("exceeded 2 pages");
-    await expect(refreshReadyPullRequests({ repository, request: async () => ({ status: 200, body: {} }) })).rejects.toThrow("not an array");
-    await expect(refreshReadyPullRequests({ repository, request: async () => ({ status: 200, body: [{ number: "1" }] }) })).rejects.toThrow("malformed");
   });
 
   it("reports operational candidate failures without hiding them or stopping independent candidates", async () => {

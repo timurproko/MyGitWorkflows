@@ -40,19 +40,6 @@ export function classifyDocumentationAutoMerge(files) {
   };
 }
 
-export function planDocumentationAutoMerge({ validation, autoMergeArmed, mergeableState, mergeable }) {
-  if (validation === "failure" || mergeable !== true) return "wait";
-  if (mergeableState === "clean" || mergeableState === "unstable") {
-    // Invariant: a non-required check does not replace current-head validation or branch protection.
-    if (validation === "success") return "merge";
-    return autoMergeArmed ? "unchanged" : "wait";
-  }
-  if (mergeableState === "blocked" || mergeableState === "behind") {
-    return autoMergeArmed ? "unchanged" : "arm";
-  }
-  return "wait";
-}
-
 function validPath(value) {
   return typeof value === "string"
     && value.length > 0

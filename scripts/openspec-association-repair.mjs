@@ -18,16 +18,3 @@ export function parseAssociationRepair(text) {
   }
   return value;
 }
-
-/** Find and parse the one archived repair record for a named change in a verified OpenSpec snapshot. */
-export async function loadAssociationRepair(snapshot, change) {
-  if (!CHANGE.test(change ?? "")) throw archiveFailure("association-repair-change");
-  const pattern = new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${change.replaceAll("-", "\\-")}/association-repair\\.json$`);
-  const matches = [...snapshot.entries.keys()].filter(path => pattern.test(path));
-  if (matches.length !== 1) throw archiveFailure("association-repair-missing-or-ambiguous");
-  const bytes = await snapshot.blob(matches[0]);
-  if (!bytes || bytes.length > 64 * 1024) throw archiveFailure("association-repair-size");
-  const record = parseAssociationRepair(bytes.toString("utf8"));
-  if (record.change !== change) throw archiveFailure("association-repair-change");
-  return { path: matches[0], archive: matches[0].slice(0, -"association-repair.json".length), record };
-}

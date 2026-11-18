@@ -1,14 +1,10 @@
-import { loadPullRequestAcceptance } from "./openspec-acceptance-github.mjs";
 import { snapshotOpenSpec } from "./openspec-archive-staging.mjs";
-import { archiveFailure, assertMergedImplementation, inspectTasks, parseImplementation, parseAcceptance, retiredCapability, selectAcceptance, SHA } from "./openspec-archive-policy.mjs";
+import { archiveFailure, inspectTasks, parseImplementation, retiredCapability, SHA } from "./openspec-archive-policy.mjs";
 import { parseImplementationAcceptanceScenarios } from "./openspec-acceptance-checklist.mjs";
-import { assertManualAcceptanceMerge, assertVersion3AcceptanceMerge, digest, requireAcceptance } from "./openspec-acceptance-policy.mjs";
+import { assertManualAcceptanceMerge, requireAcceptance } from "./openspec-acceptance-policy.mjs";
 import { parseAssociationRepair } from "./openspec-association-repair.mjs";
 import { parseConditionalAcceptance, verifyConditionalAcceptance } from "./openspec-delivery-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
-
-export const ACTIVE_TO_ARCHIVE_RENAME_POLICY = true;
-export const ASSOCIATION_REPAIR_POLICY = true;
 
 export function createArchiveReader({ repository, token, fetchImpl = fetch, apiUrl = "https://api.github.com", deadline = Infinity }) {
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository)) throw archiveFailure("repository-identity");
@@ -169,122 +165,6 @@ export async function validateVersion3Candidate(reader, number) {
     if (path.startsWith("openspec/specs/") && !specPaths.has(path)) throw archiveFailure("delivery-unexpected-openspec-path", path);
   }
   return { disposition: "ready-for-maintainer-integration", pull, implementation, targetSha: target.object.sha, ...value };
-}
-
-export async function loadImplementationEvidence(reader, number) {
-  if (!Number.isSafeInteger(number) || number < 1) throw archiveFailure("implementation-pr");
-  const { get, pages, prefix, repository, ancestor } = reader;
-  const pull = await get(`${prefix}/pulls/${number}`);
-  if (pull.number !== number) throw archiveFailure("implementation-pr");
-  const implementation = parseImplementation(pull.body ?? "");
-  if (!implementation) return { disposition: "unlinked", pull };
-  if (implementation.version === 3 && pull.merged !== true) {
-    if (pull.state === "closed") return { disposition: "closed", pull, implementation };
-    if (pull.draft !== false) return { disposition: "draft", pull, implementation };
-    if (!implementation.archive || !implementation.acceptanceManifest || implementation.finalizedHead !== pull.head?.sha) {
-      return { disposition: "needs-finalization", pull, implementation };
-    }
-    return await validateVersion3Candidate(reader, number);
-  }
-  try {
-    const files = await pages(`/pulls/${number}/files`, 3000);
-    assertMergedImplementation(pull, repository, files, { allowDocumentation: implementation.version === 3 });
-    const target = await get(`${prefix}/git/ref/heads/${targetBranch()}`);
-    const targetSha = target.object?.sha;
-    if (!SHA.test(targetSha ?? "")) throw archiveFailure("target-identity");
-    await ancestor(pull.merge_commit_sha, targetSha);
-
-    if (implementation.version === 1) {
-      const specification = await get(`${prefix}/pulls/${implementation.specificationPr}`);
-      if (specification.merged !== true || specification.base?.ref !== targetBranch()
-        || specification.base.repo?.full_name !== repository || !SHA.test(specification.merge_commit_sha ?? "")
-        || Date.parse(specification.merged_at) >= Date.parse(pull.merged_at)) throw archiveFailure("specification-merge");
-      await ancestor(specification.merge_commit_sha, pull.head.sha);
-      const specFiles = await pages(`/pulls/${implementation.specificationPr}/files`, 3000);
-      if (specFiles.length !== specification.changed_files || !specFiles.some(file => file.status === "added"
-        && file.filename === `openspec/changes/${implementation.change}/.openspec.yaml`)) throw archiveFailure("specification-change-link");
-    } else if (implementation.version === 2) {
-      const active = `openspec/changes/${implementation.change}/`;
-      const source = await snapshotOpenSpec(reader, pull.head.sha);
-      const merged = await snapshotOpenSpec(reader, pull.merge_commit_sha);
-      if (!source.entries.has(`${active}.openspec.yaml`) || !merged.entries.has(`${active}.openspec.yaml`)) throw archiveFailure("implementation-change-missing");
-      const selected = snapshot => [...snapshot.entries].filter(([path]) => path.startsWith(active)).sort(([a], [b]) => a.localeCompare(b));
-      if (JSON.stringify(selected(source)) !== JSON.stringify(selected(merged))) throw archiveFailure("implementation-change-drift");
-    } else {
-      await inspectVersion3DeliverySnapshot(reader, pull, implementation, pull.head.sha, { allowLegacyVersion3Phase: true });
-      await inspectVersion3DeliverySnapshot(reader, pull, implementation, pull.merge_commit_sha, { allowLegacyVersion3Phase: true });
-    }
-
-    return { disposition: "source", pull, implementation, targetSha, files };
-  } catch (error) {
-    error.archiveChange = implementation.change;
-    throw error;
-  }
-}
-
-export async function loadVersion3Acceptance(reader, source) {
-  const { implementation, pull } = source;
-  requireAcceptance(implementation.version === 3, "delivery-version");
-  const actor = pull.merged_by?.login;
-  requireAcceptance(/^[a-zA-Z0-9-]{1,39}$/.test(actor ?? ""), "acceptance-manual-authority");
-  const permission = await reader.get(`${reader.prefix}/collaborators/${actor}/permission`);
-  const events = await reader.pages(`/issues/${pull.number}/timeline`, 1000);
-  const integration = assertVersion3AcceptanceMerge(pull, permission.permission, events);
-  const delivery = await inspectVersion3DeliverySnapshot(reader, pull, implementation, pull.head.sha, { allowLegacyVersion3Phase: true });
-  await verifyAssociationRepairSource(reader, pull, delivery.associationRepair);
-  const validation = await findImplementationValidation(reader, pull);
-  await reader.ancestor(pull.merge_commit_sha, source.targetSha);
-  const target = await snapshotOpenSpec(reader, source.targetSha);
-  const retained = snapshot => [...snapshot.entries].filter(([path]) => path.startsWith(implementation.archive)).sort(([a], [b]) => a.localeCompare(b));
-  requireAcceptance(JSON.stringify(retained(target)) === JSON.stringify(retained(delivery.snapshot))
-    && ![...target.entries.keys()].some(path => path.startsWith(`openspec/changes/${implementation.change}/`)),
-  "delivery-archive-drift");
-  const manifestText = (await delivery.snapshot.blob(implementation.acceptanceManifest)).toString();
-  const action = integration.kind === "manual" ? "manual merge" : "human-enabled native auto-merge";
-  const acceptance = { kind: "single-pr", id: pull.number, author: actor, createdAt: integration.enabledAt ?? pull.merged_at,
-    bodyDigest: digest(manifestText), checklistDigest: delivery.checklistDigest, checklistComplete: true,
-    checks: delivery.scenarios, headSha: pull.head.sha, mergeSha: pull.merge_commit_sha, manifest: delivery.manifest,
-    value: { version: 1, change: implementation.change, headSha: pull.head.sha, specBaseSha: delivery.manifest.specBaseSha,
-      verdict: "accepted", implementationComplete: true, manualReview: "passed", specSyncReviewed: true,
-      evidence: `Authorized ${action} of single delivery PR #${pull.number}; manifest SHA-256 ${digest(manifestText)}.` } };
-  return { ...source, disposition: "eligible", acceptance, validation, delivery, integration };
-}
-
-export async function loadArchiveEvidence(reader, number, { allowMissing = false } = {}) {
-  const source = await loadImplementationEvidence(reader, number);
-  if (["unlinked", "closed", "draft", "needs-finalization", "ready-for-maintainer-integration"].includes(source.disposition)) return source;
-  const { implementation, pull } = source;
-  if (implementation.version === 3) {
-    try { return await loadVersion3Acceptance(reader, source); }
-    catch (error) { error.archiveChange = implementation.change; throw error; }
-  }
-  const { get, pages, prefix, ancestor } = reader;
-  try {
-    const comments = await pages(`/issues/${number}/comments`);
-    const evidenceComments = [];
-    for (const comment of comments) {
-      if (!parseAcceptance(comment.body ?? "")) continue;
-      if (!/^[a-zA-Z0-9-]{1,39}$/.test(comment.user?.login ?? "")) throw archiveFailure("acceptance-authority");
-      const permission = await get(`${prefix}/collaborators/${comment.user.login}/permission`);
-      evidenceComments.push({ ...comment, permission: permission.permission });
-    }
-    let legacy = null;
-    try { legacy = selectAcceptance(evidenceComments, implementation, pull.head.sha); }
-    catch (error) { if (error.archiveCode !== "acceptance-missing") throw error; }
-    const receipt = await loadPullRequestAcceptance(reader, source);
-    if (legacy && receipt) throw archiveFailure("acceptance-conflict");
-    const acceptance = receipt ?? (legacy ? { kind: "comment", ...legacy } : null);
-    if (!acceptance) {
-      if (allowMissing) return { ...source, disposition: "acceptance-missing" };
-      throw archiveFailure("acceptance-missing");
-    }
-    await ancestor(acceptance.value.specBaseSha, pull.head.sha);
-    const validation = await findImplementationValidation(reader, pull);
-    return { ...source, disposition: "eligible", acceptance, validation };
-  } catch (error) {
-    error.archiveChange = implementation.change;
-    throw error;
-  }
 }
 
 export async function findImplementationValidation(reader, pull) {
