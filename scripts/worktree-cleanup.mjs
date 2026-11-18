@@ -61,8 +61,10 @@ export async function inspectWorktree({ worktree, primary, here, git, findMerged
   const pull = await findMergedPull(primary.path, worktree.branch);
   if (!pull) return keep("no merged pull request for this branch");
   const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
-  if (head !== pull.head && !(await contains(git, primary.path, pull, head))) {
-    return keep(`has commits that pull request #${pull.number} did not merge`);
+  if (head !== pull.head) {
+    const merged = await contains(git, primary.path, pull, head);
+    if (merged === null) return keep(`could not compare with pull request #${pull.number}; run cleanup again`);
+    if (!merged) return keep(`has commits that pull request #${pull.number} did not merge`);
   }
   return { action: "remove", reason: `pull request #${pull.number} merged`, pull: pull.number };
 }
@@ -94,11 +96,14 @@ export function formatReport(report) {
 
 // Rationale: the remote branch is usually deleted after a merge, so the merged head is fetched by its pull-request ref.
 async function contains(git, primary, pull, head) {
+  try { await git(primary, ["fetch", "--quiet", "origin", `refs/pull/${pull.number}/head`]); } catch { /* the merged head may already be local */ }
   try {
-    await git(primary, ["fetch", "--quiet", "origin", `refs/pull/${pull.number}/head`]);
     await git(primary, ["merge-base", "--is-ancestor", head, pull.head]);
     return true;
-  } catch { return false; }
+  } catch (error) {
+    // Invariant: only exit code 1 of merge-base means "not an ancestor"; a missing merged head or a busy repository is unknown.
+    return error?.code === 1 ? false : null;
+  }
 }
 
 async function findNestedRepository(root, relative = "", depth = 0) {
