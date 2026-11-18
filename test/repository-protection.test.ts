@@ -28,7 +28,7 @@ function fake(rulesets: any[], { classic = false } = {}) {
     if (method !== "GET") return {};
     if (path === "repos/o/r") return { default_branch: "develop" };
     if (path === "repos/o/r/rulesets") return rulesets.map(({ id, name }) => ({ id, name }));
-    if (path.endsWith("/protection")) { if (classic) return {}; throw new Error("404"); }
+    if (path.endsWith("/protection")) { if (classic && path.includes("/branches/develop/")) return {}; throw new Error("404"); }
     return rulesets.find(ruleset => path === `repos/o/r/rulesets/${ruleset.id}`);
   };
   return { api, writes: () => calls.filter(([method]) => method !== "GET") };
@@ -63,7 +63,7 @@ describe("repository protection", () => {
     const report = await protectRepository({ repository: "o/r", api: dry.api, declarations });
     expect(dry.writes()).toEqual([]);
     expect(report.rulesets.map(ruleset => [ruleset.name, ruleset.changes.length])).toEqual([["protect-develop", 3], ["protect-master", 1], ["protect-release-tags", 1]]);
-    expect(report.notes).toEqual(["ruleset experiment is not declared and was left alone", expect.stringContaining("classic branch protection")]);
+    expect(report.notes).toEqual(["ruleset experiment is not declared and was left alone", "the classic branch protection rule on develop duplicates the ruleset and would be removed"]);
     expect(formatProtection(report)).toContain("Nothing was changed.");
   });
 
@@ -83,6 +83,20 @@ describe("repository protection", () => {
     expect(same.writes()).toEqual([]);
     expect(formatProtection(report)).toContain("protect-develop: matches");
     await expect(protectRepository({ repository: "o/other", api: same.api, declarations })).rejects.toThrow("not declared");
+  });
+
+  it("removes a classic rule only when the declared ruleset is confirmed active", async () => {
+    const standard = declarations["o/r"].map((declaration, index) => ({ ...buildRuleset(declaration, "develop"), id: index + 1 }));
+    const ready = fake(standard, { classic: true });
+    const done = await protectRepository({ repository: "o/r", api: ready.api, declarations, apply: true });
+    expect(ready.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["DELETE repos/o/r/branches/develop/protection"]);
+    expect(done.notes).toEqual(["removed the classic branch protection rule on develop; protect-develop protects it"]);
+
+    // The fake never reflects writes, so after applying it still reads the old ruleset: the classic rule must stay.
+    const stale = fake([legacyDefault, legacyTags], { classic: true });
+    const kept = await protectRepository({ repository: "o/r", api: stale.api, declarations, apply: true });
+    expect(stale.writes().some(([method]) => method === "DELETE")).toBe(false);
+    expect(kept.notes).toEqual(["kept the classic branch protection rule on develop: protect-develop is not confirmed active"]);
   });
 
   it("ships a declaration file whose every entry builds", async () => {

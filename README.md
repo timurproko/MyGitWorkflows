@@ -59,7 +59,8 @@ edit the file, merge it, and apply again; nothing is configured by hand in GitHu
 | `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. |
 | `release-tags` | `protect-release-tags` | No deletion or movement of `v*` tags except by the listed release Apps. |
 
-An existing ruleset that governs the same refs is renamed and updated in place. A ruleset that is not declared is
+An existing ruleset that governs the same refs is renamed and updated in place. An older classic branch protection
+rule on a declared branch is removed once the ruleset is confirmed active. A ruleset that is not declared is
 reported and left alone.
 
 ## Layout

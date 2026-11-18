@@ -121,8 +121,22 @@ export async function protectRepository({ repository, apply = false, api = defau
     rulesets.push({ name: desired.name, changes });
   }
   const notes = live.filter(ruleset => !managed.has(ruleset.id)).map(ruleset => `ruleset ${ruleset.name} is not declared and was left alone`);
-  const classic = await api("GET", `repos/${repository}/branches/${defaultBranch}/protection`).catch(() => null);
-  if (classic) notes.push(`a classic branch protection rule also exists on ${defaultBranch}; the ruleset replaces it, so delete it under Settings > Branches to keep one source of truth`);
+  // Invariant: a classic rule is removed only after a fresh read shows the declared ruleset active on that
+  // branch, so the branch is never left without protection.
+  const branches = [defaultBranch, ...declared.filter(declaration => declaration.kind === "branch").map(declaration => declaration.branch)];
+  for (const branch of branches) {
+    const path = `repos/${repository}/branches/${branch}/protection`;
+    if (!await api("GET", path).catch(() => null)) continue;
+    if (!apply) { notes.push(`the classic branch protection rule on ${branch} duplicates the ruleset and would be removed`); continue; }
+    const desired = buildRuleset(declared.find(declaration => declaration.kind === (branch === defaultBranch ? "default-branch" : "branch") && (branch === defaultBranch || declaration.branch === branch)), defaultBranch);
+    const current = [];
+    for (const entry of await api("GET", `repos/${repository}/rulesets`)) current.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
+    const installed = findLiveRuleset(current, desired, defaultBranch);
+    if (installed?.enforcement === "active" && describeChanges(installed, desired, defaultBranch).length === 0) {
+      await api("DELETE", path);
+      notes.push(`removed the classic branch protection rule on ${branch}; ${desired.name} protects it`);
+    } else notes.push(`kept the classic branch protection rule on ${branch}: ${desired.name} is not confirmed active`);
+  }
   return { repository, rulesets, applied: apply, notes };
 }
 
