@@ -141,6 +141,8 @@ stop; a new attempt needs a new request.
 
 ## 7. After the merge
 
+- The bot deletes the branch of a merged PR, and of a PR closed without merging. To continue closed work, use
+  "Restore branch" on the PR page before reopening it.
 - Verify the PR merged and, for a linked change, that its archive and synced specs are on the default branch.
   Never edit a merged PR's body.
 - Leave the worktree first (in an A1 session: `a1 worktree detach`), then from the primary checkout run
@@ -152,8 +154,13 @@ stop; a new attempt needs a new request.
 
 ## Always
 
-- No AI attribution: no `Co-Authored-By` trailer naming a model or vendor, and no "Generated with" line, in
-  commits, PR titles or PR bodies.
+- No AI attribution, for every agent (Claude, Copilot, Cursor, Codex and any other): commit as the maintainer's
+  configured Git identity, never as the agent. No `Co-Authored-By` trailer naming a model, agent or vendor, and
+  no "Generated with" line, in commits, PR titles or PR bodies. A squash merge copies every branch author into
+  the merged commit, so one agent-authored commit puts the agent in the repository's contributors permanently.
+  The `Delivery check` fails with `agent-attribution` when it finds one: rewrite those commits under the
+  maintainer's identity without the trailer and push with `--force-with-lease`. This is the one case where
+  rewriting pushed history is allowed, and never after the bot's finalization commit without pulling it first.
 - A command for the maintainer to run is exactly one Git Bash line in one fenced block, starting with
   `cd <absolute path> && ...`, with forward-slash paths.
 - Protect uncommitted and unpublished work, other tasks' worktrees and the primary checkout. Respect locks

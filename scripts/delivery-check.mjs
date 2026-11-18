@@ -2,6 +2,7 @@
 import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspectAgentAttribution } from "./agent-attribution.mjs";
 import { inspectUnassociatedPull } from "./openspec-association-policy.mjs";
 import { createArchiveReader, validateVersion3Candidate } from "./openspec-archive-github.mjs";
 import { parseImplementation, SHA } from "./openspec-archive-policy.mjs";
@@ -14,13 +15,17 @@ import { parseImplementation, SHA } from "./openspec-archive-policy.mjs";
  * automation still has to finalize this head; `wait` also fails the check so the head cannot merge.
  */
 export async function checkDelivery({ reader, number, expectedHead,
-  inspectUnassociated = inspectUnassociatedPull, validateFinalized = validateVersion3Candidate }) {
+  inspectUnassociated = inspectUnassociatedPull, validateFinalized = validateVersion3Candidate,
+  inspectAttribution = inspectAgentAttribution }) {
   if (!Number.isSafeInteger(number) || number < 1 || !SHA.test(expectedHead ?? "")) return fail("event-identity");
   const pull = await reader.get(`${reader.prefix}/pulls/${number}`);
   // Invariant: a decision certifies only the head this event named; a newer push receives its own run.
   if (pull?.number !== number || pull.head?.sha !== expectedHead) return fail("event-drift");
   if (pull.state !== "open") return pass("closed");
   if (pull.draft) return wait("draft");
+  // Invariant: attribution is refused before anything else can pass, because a merge makes it permanent.
+  const attribution = await inspectAttribution(reader, pull);
+  if (attribution) return fail("agent-attribution", attribution);
 
   let implementation;
   try {
@@ -54,6 +59,7 @@ const EXPLANATION = {
   unlinked: "The pull request links no OpenSpec change and adds no active change, so nothing needs finalizing.",
   finalized: "The linked change is archived and its specifications are synchronized at this exact head.",
   closed: "The pull request is no longer open.",
+  "agent-attribution": "A commit, the title or the body names an AI agent as author or co-author. Rewrite those commits under the maintainer identity without the trailer (git rebase, then git push --force-with-lease), so the squash merge cannot copy the agent into the contributors.",
 };
 
 /**

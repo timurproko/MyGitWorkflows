@@ -29,6 +29,12 @@ describe("merged branch cleanup policy", () => {
     expect(decideMergedBranchCleanup(eligible, { kind: "absent" }).disposition).toBe("already-absent");
   });
 
+  it("also deletes the branch of a pull request closed without merging", () => {
+    const closed = classifyMergedBranchCleanup(pull({ merged: false, merged_at: null, state: "closed" }), "owner/repository");
+    expect(decideMergedBranchCleanup(closed, { kind: "present", sha: headSha, protected: false }).disposition).toBe("delete");
+    expect(decideMergedBranchCleanup(closed, { kind: "present", sha: advancedSha, protected: false }).disposition).toBe("refused");
+  });
+
   it("preserves an advanced or protected branch", () => {
     const eligible = classifyMergedBranchCleanup(pull(), "owner/repository");
     expect(decideMergedBranchCleanup(eligible, { kind: "present", sha: advancedSha, protected: false })).toMatchObject({
@@ -40,7 +46,7 @@ describe("merged branch cleanup policy", () => {
   });
 
   it.each([
-    ["unmerged", { merged: false, merged_at: null }],
+    ["still open", { merged: false, merged_at: null, state: "open" }],
     ["wrong base", { base: { ref: "master" } }],
     ["fork", { head: { ref: "topic", sha: headSha, repo: { full_name: "other/fork" } } }],
     ["default", { head: { ref: "develop", sha: headSha, repo: { full_name: "owner/repository" } } }],

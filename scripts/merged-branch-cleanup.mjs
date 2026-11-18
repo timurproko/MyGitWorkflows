@@ -5,7 +5,7 @@ const RESERVED_REFS = new Set(["main", "master", "develop", "HEAD"]);
 const RESERVED_PREFIXES = ["release/", "releases/", "refs/", "tags/"];
 
 /**
- * Validate untrusted pull-request metadata before any branch API is called.
+ * Validate untrusted metadata of a merged or closed pull request before any branch API is called.
  * The live ref SHA and protection state are checked separately immediately
  * before deletion.
  */
@@ -18,7 +18,10 @@ export function classifyMergedBranchCleanup(pull, repository) {
 
   const refuse = reason => ({ disposition: "refused", number, ref, expectedSha, reason });
   if (!Number.isSafeInteger(number) || number < 1) return refuse("malformed pull request number");
-  if (pull?.merged !== true || !pull?.merged_at) return refuse("pull request was closed without merge");
+  // Rationale: a closed pull request is finished work too; its commits stay reachable from the pull request,
+  // where GitHub offers to restore the branch, so only an open pull request keeps its branch.
+  const merged = pull?.merged === true && Boolean(pull?.merged_at);
+  if (!merged && pull?.state !== "closed") return refuse("pull request is still open");
   if (base !== targetBranch()) return refuse(`base branch is not ${targetBranch()}`);
   if (headRepository !== repository) return refuse("head repository is not the governed repository");
   if (typeof ref !== "string" || !NORMAL_REF.test(ref)) return refuse("head ref is malformed");

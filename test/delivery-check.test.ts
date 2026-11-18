@@ -10,7 +10,7 @@ function run(pull: Record<string, unknown>, overrides: Record<string, unknown> =
   const reader = { prefix: "/repos/owner/repo", repository: "owner/repo",
     get: async () => ({ number: 5, state: "open", draft: false, body: "", head: { sha: head }, ...pull }) };
   return checkDelivery({ reader, number: 5, expectedHead: head,
-    inspectUnassociated: async () => ({ blocked: false }), validateFinalized: async () => ({}), ...overrides });
+    inspectUnassociated: async () => ({ blocked: false }), validateFinalized: async () => ({}), inspectAttribution: async () => null, ...overrides });
 }
 
 describe("delivery check", () => {
@@ -37,6 +37,13 @@ describe("delivery check", () => {
     await expect(run({ body: fence(finalized) }, { validateFinalized: async () => { throw refusal; } }))
       .resolves.toEqual({ outcome: "fail", reason: "delivery-target-stale" });
     await expect(run({ body: fence(finalized) }, { validateFinalized: async () => { throw new Error("network"); } })).rejects.toThrow("network");
+  });
+
+  it("refuses a ready pull request that carries agent attribution, before any pass", async () => {
+    const inspectAttribution = async () => "abc1234 co-authored by Copilot";
+    await expect(run({ body: fence(finalized) }, { inspectAttribution }))
+      .resolves.toEqual({ outcome: "fail", reason: "agent-attribution", detail: "abc1234 co-authored by Copilot" });
+    await expect(run({ draft: true }, { inspectAttribution })).resolves.toEqual({ outcome: "wait", reason: "draft" });
   });
 
   it("fails malformed metadata and event drift", async () => {
