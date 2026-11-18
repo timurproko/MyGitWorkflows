@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkDelivery, describeResult } from "../scripts/delivery-check.mjs";
+import { checkDelivery, describeResult, settleDelivery } from "../scripts/delivery-check.mjs";
 
 const head = "b".repeat(40);
 const archive = "openspec/changes/archive/2026-01-02-example-change/";
@@ -43,6 +43,19 @@ describe("delivery check", () => {
     await expect(run({ body: "```openspec-implementation\nnot json\n```\n" })).resolves.toMatchObject({ outcome: "fail", reason: "malformed-implementation-metadata" });
     await expect(run({ head: { sha: "d".repeat(40) } })).resolves.toEqual({ outcome: "fail", reason: "event-drift" });
     await expect(checkDelivery({ reader: {}, number: 0, expectedHead: head })).resolves.toEqual({ outcome: "fail", reason: "event-identity" });
+  });
+
+  it("re-reads while the bot is still recording the finalized head, and only then reports wait", async () => {
+    const waiting = { outcome: "wait", reason: "awaiting-finalization" };
+    const answers = [waiting, waiting, { outcome: "pass", reason: "finalized" }];
+    let sleeps = 0;
+    const sleep = async () => { sleeps += 1; };
+    expect(await settleDelivery(async () => answers.shift()!, { sleep })).toEqual({ outcome: "pass", reason: "finalized" });
+    expect(sleeps).toBe(2);
+    expect(await settleDelivery(async () => waiting, { attempts: 3, sleep })).toEqual(waiting);
+    expect(sleeps).toBe(4);
+    expect(await settleDelivery(async () => ({ outcome: "wait", reason: "draft" }), { sleep })).toEqual({ outcome: "wait", reason: "draft" });
+    expect(sleeps).toBe(4);
   });
 
   it("explains each result for the job summary", () => {

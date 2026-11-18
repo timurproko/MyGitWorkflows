@@ -56,6 +56,19 @@ const EXPLANATION = {
   closed: "The pull request is no longer open.",
 };
 
+/**
+ * Rationale: the bot pushes the finalized head and records it in the pull-request body a moment later, so a check
+ * started by that push briefly sees the old record. It re-reads for a short while before reporting `wait`.
+ */
+export async function settleDelivery(check, { attempts = 9, delayMs = 10_000, sleep = ms => new Promise(done => setTimeout(done, ms)) } = {}) {
+  let result = await check();
+  for (let attempt = 1; attempt < attempts && result.outcome === "wait" && result.reason === "awaiting-finalization"; attempt += 1) {
+    await sleep(delayMs);
+    result = await check();
+  }
+  return result;
+}
+
 /** One Markdown paragraph for the job summary. */
 export function describeResult(result) {
   const detail = result.detail ? ` (${result.detail})` : "";
@@ -67,7 +80,8 @@ async function main(environment = process.env) {
   const repository = environment.GITHUB_REPOSITORY ?? "";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("GITHUB_REPOSITORY is required");
   const reader = createArchiveReader({ repository, token: environment.GITHUB_TOKEN ?? environment.GH_TOKEN });
-  const result = await checkDelivery({ reader, number: Number(environment.DELIVERY_PR_NUMBER), expectedHead: environment.DELIVERY_EXPECTED_HEAD });
+  const result = await settleDelivery(() => checkDelivery({ reader, number: Number(environment.DELIVERY_PR_NUMBER),
+    expectedHead: environment.DELIVERY_EXPECTED_HEAD }));
   if (environment.GITHUB_STEP_SUMMARY) await appendFile(environment.GITHUB_STEP_SUMMARY, `## Delivery\n\n${describeResult(result)}\n`);
   console.log(JSON.stringify(result));
   if (result.outcome !== "pass") {
