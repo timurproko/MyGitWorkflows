@@ -19,7 +19,7 @@ async function request(path, { method = "GET", expected = [200] } = {}) {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${token}`,
       "x-github-api-version": "2022-11-28",
-      "user-agent": "a1-merged-branch-cleanup",
+      "user-agent": "delivery-merged-branch-cleanup",
     },
   });
   const text = await response.text();

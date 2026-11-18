@@ -10,6 +10,7 @@ import {
 import { prepareSinglePrDelivery, replaceImplementationMetadata } from "./openspec-delivery-finalization.mjs";
 import { readCanonicalSpecs } from "./openspec-delivery-git.mjs";
 import { archiveFailure, archivePaths, assertArchiveDiff, parseImplementation, SHA } from "./openspec-archive-policy.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 
 const execute = promisify(execFile);
 const ARCHIVE_ROOT = "openspec/changes/archive/";
@@ -28,7 +29,7 @@ export function classifyFinalizationCandidate(pull, repository, { allowDraft = f
   try { implementation = parseImplementation(pull.body ?? ""); } catch { return { skip: "malformed-metadata" }; }
   if (!implementation) return { skip: "unassociated" };
   if (implementation.version !== 3) return { skip: `legacy-version-${implementation.version}` };
-  if (pull.base?.ref !== "develop" || pull.base.repo?.full_name !== repository || pull.head?.repo?.full_name !== repository
+  if (pull.base?.ref !== targetBranch() || pull.base.repo?.full_name !== repository || pull.head?.repo?.full_name !== repository
     || !SHA.test(pull.head.sha ?? "") || typeof pull.head.ref !== "string" || !/^[A-Za-z0-9._\/-]{1,200}$/.test(pull.head.ref)
     || pull.head.ref.split("/").some(part => !part || part.startsWith(".") || part.endsWith(".lock") || part === "..")) {
     if (pull.draft) return { skip: "draft-ineligible-identity" };
@@ -108,9 +109,9 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
     throw error;
   }
   if (typeof pull.node_id !== "string" || !pull.node_id) throw archiveFailure("finalization-candidate-identity");
-  const target = (await reader.get(`${reader.prefix}/git/ref/heads/develop`)).object?.sha;
+  const target = (await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
   if (!SHA.test(target ?? "")) throw archiveFailure("target-identity");
-  // Rationale: PR base metadata can lag develop; fetched ancestry below establishes current-target readiness.
+  // Rationale: PR base metadata can lag the target branch; fetched ancestry below establishes current-target readiness.
   const root = await realpath(await mkdtemp(join(tmpdir(), "openspec-readiness-")));
   const checkout = join(root, "checkout");
   await mkdir(checkout);
@@ -128,9 +129,9 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
     await git(["init", "--quiet"]);
     await git(["remote", "add", "origin", remoteUrl ?? `https://github.com/${reader.repository}.git`]);
     await git(["sparse-checkout", "set", "--cone", "openspec"]);
-    await git(["fetch", "--quiet", "--filter=blob:none", "origin", "+refs/heads/develop:refs/remotes/origin/develop",
+    await git(["fetch", "--quiet", "--filter=blob:none", "origin", `+refs/heads/${targetBranch()}:refs/remotes/origin/${targetBranch()}`,
       `+refs/heads/${pull.head.ref}:refs/remotes/origin/candidate`]);
-    if (await git(["rev-parse", "refs/remotes/origin/develop"]) !== target) throw archiveFailure("target-advanced");
+    if (await git(["rev-parse", `refs/remotes/origin/${targetBranch()}`]) !== target) throw archiveFailure("target-advanced");
     if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== pull.head.sha) throw archiveFailure("finalization-head-changed");
     await git(["checkout", "--quiet", "--detach", pull.head.sha]);
     if ((await git(["merge-base", "--is-ancestor", target, pull.head.sha], { allowFailure: true })) === null) {
@@ -156,7 +157,7 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
   if (!samePromotionSnapshot(current, pull, reader.repository)) {
     return { disposition: "retry", reason: "draft-changed-before-ready", head: pull.head.sha, commits: [] };
   }
-  const currentTarget = (await reader.get(`${reader.prefix}/git/ref/heads/develop`)).object?.sha;
+  const currentTarget = (await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
   if (!SHA.test(currentTarget ?? "")) throw archiveFailure("target-identity");
   if (currentTarget !== target) return { disposition: "retry", reason: "draft-target-changed", head: pull.head.sha, commits: [] };
   await publisher.ready(number, pull.node_id);
@@ -165,7 +166,7 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
 
 /**
  * Promote one complete draft or reconcile one ready version-3 pull request to its finalized form: finalize an active
- * head, re-finalize a drifted one, or merge `develop` first when the head is behind.
+ * head, re-finalize a drifted one, or merge the target branch first when the head is behind.
  */
 export async function reconcileFinalization({ reader, publisher, number, toolRoot, gitImpl = execute, remoteUrl = null,
   date = utcDate(), deadline = Infinity }) {
@@ -186,7 +187,7 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
   if (classified.draft) return await promoteCompletedDraft({ reader, publisher, pull, implementation, number, toolRoot, gitImpl,
     remoteUrl, date, deadline });
   const change = implementation.change;
-  const target = (await reader.get(`${prefix}/git/ref/heads/develop`)).object?.sha;
+  const target = (await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
   if (!SHA.test(target ?? "")) throw archiveFailure("target-identity");
   const head = pull.head.sha;
   const branch = pull.head.ref;
@@ -210,8 +211,8 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
     await git(["init", "--quiet"]);
     await git(["remote", "add", "origin", remoteUrl ?? `https://github.com/${reader.repository}.git`]);
     await git(["sparse-checkout", "set", "--cone", "openspec"]);
-    await git(["fetch", "--quiet", "--filter=blob:none", "origin", `+refs/heads/develop:refs/remotes/origin/develop`, `+refs/heads/${branch}:refs/remotes/origin/candidate`]);
-    if (await git(["rev-parse", "refs/remotes/origin/develop"]) !== target) throw archiveFailure("target-advanced");
+    await git(["fetch", "--quiet", "--filter=blob:none", "origin", `+refs/heads/${targetBranch()}:refs/remotes/origin/${targetBranch()}`, `+refs/heads/${branch}:refs/remotes/origin/candidate`]);
+    if (await git(["rev-parse", `refs/remotes/origin/${targetBranch()}`]) !== target) throw archiveFailure("target-advanced");
     if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== head) throw archiveFailure("finalization-head-changed");
     await git(["checkout", "--quiet", "--detach", head]);
 
@@ -232,7 +233,7 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       const mergeBase = await git(["merge-base", target, head]);
       if (!SHA.test(mergeBase)) throw archiveFailure("finalization-merge-base");
       if (archive) {
-        // Rationale: restoring the active form against the merge-base lets develop's spec bytes win the merge without conflict.
+        // Rationale: restoring the active form against the merge-base lets the target branch's spec bytes win the merge without conflict.
         const baseline = await readCanonicalSpecs({ cwd: checkout, sha: mergeBase, env, gitImpl });
         for (const path of scope.specs) {
           const bytes = baseline.get(path);
@@ -247,7 +248,7 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
         body = replaceImplementationMetadata(body, { version: 3, change });
         archive = null;
       }
-      const merged = await git([...identity, "merge", "--quiet", "--no-ff", "--no-edit", "-m", `Merge develop into ${branch} for finalization`, target], { allowFailure: true });
+      const merged = await git([...identity, "merge", "--quiet", "--no-ff", "--no-edit", "-m", `Merge ${targetBranch()} into ${branch} for finalization`, target], { allowFailure: true });
       if (merged === null) { await git(["merge", "--abort"], { allowFailure: true }); throw archiveFailure("finalization-merge-conflict"); }
       commits.push({ kind: "merge", sha: await git(["rev-parse", "HEAD"]) });
     }
@@ -284,9 +285,9 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       if (commit.kind === "merge") {
         const parents = (await git(["rev-list", "--parents", "-n", "1", commit.sha])).split(" ").slice(1);
         if (parents.length !== 2 || parents[0] !== previous || parents[1] !== target) throw archiveFailure("finalization-push-scope", "merge");
-        const developChanges = new Set((await git(["diff", "--name-only", `${await git(["merge-base", target, previous])}`, target])).split("\n").filter(Boolean));
+        const targetChanges = new Set((await git(["diff", "--name-only", `${await git(["merge-base", target, previous])}`, target])).split("\n").filter(Boolean));
         const brought = (await git(["diff", "--name-only", previous, commit.sha])).split("\n").filter(Boolean);
-        const foreign = brought.find(path => !developChanges.has(path));
+        const foreign = brought.find(path => !targetChanges.has(path));
         if (foreign) throw archiveFailure("finalization-push-scope", foreign);
       } else {
         const files = (await git(["diff", "--name-only", "--no-renames", "-z", previous, commit.sha])).split("\0").filter(Boolean);

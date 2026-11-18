@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { archiveReaderFromGet, loadArchiveEvidence } from "./openspec-archive-github.mjs";
 import { archiveFailure, assertArchiveDiff, metadataBlock, SHA, CHANGE } from "./openspec-archive-policy.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 
 const execute = promisify(execFile);
 const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -175,7 +176,7 @@ export async function publishArchive({ publisher, reader, evidence, candidate, r
   if (existing) {
     const known = readArchiveMarker(existing.body);
     if (!matchesSource(known) || existing.user?.login !== publisher.actor || existing.head?.ref !== candidate.paths.branch
-      || existing.head?.repo?.full_name !== reader.repository || existing.base?.ref !== "develop") throw archiveFailure("archive-pr-ownership");
+      || existing.head?.repo?.full_name !== reader.repository || existing.base?.ref !== targetBranch()) throw archiveFailure("archive-pr-ownership");
     if (existing.merged_at) return { disposition: "already-archived", archivePr: existing.number };
     if (existing.state === "closed" && !retryClosed) throw archiveFailure("archive-pr-closed");
     if (known.generatedHead !== existing.head.sha || existing.body !== archivePullBody(reader.repository, known)) throw archiveFailure("archive-human-edits");
@@ -216,7 +217,7 @@ export async function publishArchive({ publisher, reader, evidence, candidate, r
   } else if (existing?.state === "open") throw archiveFailure("archive-branch-missing");
   else expectedHead = "";
 
-  const target = await reader.get(`${prefix}/git/ref/heads/develop`);
+  const target = await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`);
   if (target.object?.sha !== evidence.targetSha) throw archiveFailure("target-advanced");
   const current = await reader.get(`${prefix}/pulls/${evidence.pull.number}`);
   if (current.head?.sha !== evidence.pull.head.sha || current.merge_commit_sha !== evidence.pull.merge_commit_sha || current.body !== evidence.pull.body) {
@@ -248,7 +249,7 @@ export async function publishArchive({ publisher, reader, evidence, candidate, r
   try {
     await git(["init", "--quiet"]);
     await git(["remote", "add", "origin", `https://github.com/${reader.repository}.git`]);
-    await git(["fetch", "--quiet", "--depth=1", "origin", "develop"]);
+    await git(["fetch", "--quiet", "--depth=1", "origin", targetBranch()]);
     if (await git(["rev-parse", "FETCH_HEAD"]) !== evidence.targetSha) throw archiveFailure("target-advanced");
     await git(["checkout", "--quiet", "--detach", "FETCH_HEAD"]);
     for (const file of candidate.changes) {
@@ -279,6 +280,6 @@ export async function publishArchive({ publisher, reader, evidence, candidate, r
   const body = archivePullBody(reader.repository, { ...marker, generatedHead });
   const pull = existing?.state === "open"
     ? await publisher.mutate(`${prefix}/pulls/${existing.number}`, "PATCH", { body })
-    : await publisher.mutate(`${prefix}/pulls`, "POST", { title: `docs(openspec): archive ${marker.change}`, head: candidate.paths.branch, base: "develop", body });
+    : await publisher.mutate(`${prefix}/pulls`, "POST", { title: `docs(openspec): archive ${marker.change}`, head: candidate.paths.branch, base: targetBranch(), body });
   return { disposition: "pending", archivePr: pull.number, generatedHead };
 }

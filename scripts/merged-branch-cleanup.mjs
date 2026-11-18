@@ -1,6 +1,7 @@
+import { targetBranch } from "./delivery-target.mjs";
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const NORMAL_REF = /^(?![./])(?!.*(?:\.\.|\/\.|\.\/|\/\/|@\{|\\|[~^:?*\[]))(?!.*[./]$)[A-Za-z0-9._/-]+$/;
-const RESERVED_REFS = new Set(["develop", "master", "HEAD"]);
+const RESERVED_REFS = new Set(["main", "master", "develop", "HEAD"]);
 const RESERVED_PREFIXES = ["release/", "releases/", "refs/", "tags/"];
 
 /**
@@ -18,10 +19,10 @@ export function classifyMergedBranchCleanup(pull, repository) {
   const refuse = reason => ({ disposition: "refused", number, ref, expectedSha, reason });
   if (!Number.isSafeInteger(number) || number < 1) return refuse("malformed pull request number");
   if (pull?.merged !== true || !pull?.merged_at) return refuse("pull request was closed without merge");
-  if (base !== "develop") return refuse("base branch is not develop");
+  if (base !== targetBranch()) return refuse(`base branch is not ${targetBranch()}`);
   if (headRepository !== repository) return refuse("head repository is not the governed repository");
   if (typeof ref !== "string" || !NORMAL_REF.test(ref)) return refuse("head ref is malformed");
-  if (RESERVED_REFS.has(ref) || RESERVED_PREFIXES.some(prefix => ref.startsWith(prefix)) || /^v\d/.test(ref)) {
+  if (ref === targetBranch() || RESERVED_REFS.has(ref) || RESERVED_PREFIXES.some(prefix => ref.startsWith(prefix)) || /^v\d/.test(ref)) {
     return refuse("head ref is reserved or release-owned");
   }
   if (typeof expectedSha !== "string" || !FULL_SHA.test(expectedSha)) return refuse("head SHA is malformed or missing");

@@ -1,12 +1,12 @@
+import { targetBranch } from "./delivery-target.mjs";
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const TARGET = "develop";
 const PAGE_SIZE = 100;
 const DEFAULT_MAX_PAGES = 10;
 
 /**
  * Classify one freshly read pull request for base-branch refresh. Only an
  * open, non-draft pull request whose base and head both live in the governed
- * repository and whose base is `develop` may be updated.
+ * repository and whose base is the delivery target may be updated.
  */
 export function classifyRefreshCandidate(pull, repository) {
   const number = pull?.number;
@@ -17,7 +17,7 @@ export function classifyRefreshCandidate(pull, repository) {
   if (pull.state !== "open") return skip("pull request is not open");
   if (typeof pull.draft !== "boolean") return fail("draft state is malformed");
   if (pull.draft) return skip("draft pull request");
-  if (pull.base?.ref !== TARGET) return skip("base branch is not develop");
+  if (pull.base?.ref !== targetBranch()) return skip(`base branch is not ${targetBranch()}`);
   if (pull.base?.repo?.full_name !== repository) return skip("base repository is not the governed repository");
   if (pull.head?.repo?.full_name !== repository) return skip("head repository is a fork or unavailable");
   if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) return fail("head SHA is malformed or missing");
@@ -55,7 +55,7 @@ export function interpretBranchUpdate(decision, response) {
 }
 
 /**
- * Reconcile every open pull request targeting `develop`. Each candidate is
+ * Reconcile every open pull request targeting the delivery target. Each candidate is
  * re-read and compared against a freshly read target before an expected-head
  * update, so a stale decision can never replace a newer head. Per-candidate
  * failures are reported without stopping independent candidates; listing and
@@ -66,7 +66,7 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
   const numbers = [];
   for (let page = 1; ; page += 1) {
     if (page > maxPages) throw new Error(`open pull-request listing exceeded ${maxPages} pages`);
-    const listing = await request(`${prefix}/pulls?state=open&base=${TARGET}&per_page=${PAGE_SIZE}&page=${page}`);
+    const listing = await request(`${prefix}/pulls?state=open&base=${targetBranch()}&per_page=${PAGE_SIZE}&page=${page}`);
     if (!Array.isArray(listing.body)) throw new Error("open pull-request listing was not an array");
     for (const pull of listing.body) {
       if (!Number.isSafeInteger(pull?.number) || pull.number < 1) throw new Error("open pull-request listing contained a malformed number");
@@ -93,7 +93,7 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
     if (eligibility.disposition !== "eligible") return eligibility;
     if (eligibility.number !== number) return { ...eligibility, disposition: "failed", reason: "pull request identity changed while reading" };
 
-    const targetSha = (await request(`${prefix}/git/ref/heads/${TARGET}`)).body?.object?.sha;
+    const targetSha = (await request(`${prefix}/git/ref/heads/${targetBranch()}`)).body?.object?.sha;
     if (typeof targetSha !== "string" || !FULL_SHA.test(targetSha)) return { ...eligibility, disposition: "failed", reason: "target ref is malformed" };
     const comparison = (await request(`${prefix}/compare/${targetSha}...${eligibility.headSha}?per_page=1`)).body;
     const decision = decideRefresh(eligibility, comparison, targetSha);

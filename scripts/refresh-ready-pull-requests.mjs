@@ -1,16 +1,14 @@
-import { appendFile, readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appendFile } from "node:fs/promises";
 import { refreshReadyPullRequests } from "./ready-pull-request-refresh.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 
 // Security: only the event-producing App token may update branches; GITHUB_TOKEN is never a fallback because its pushes start no CI.
 const token = process.env.BRANCH_REFRESH_TOKEN;
 const repository = process.env.GITHUB_REPOSITORY;
 const apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com";
 if (!token || !repository) throw new Error("the branch-refresh App token and GitHub repository are required");
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const definition = JSON.parse(await readFile(resolve(root, "config/github-repository-governance.json"), "utf8"));
-if (repository !== definition.repository) throw new Error(`repository ${repository} is not the governed repository`);
+// Security: the App token is minted for the calling repository only, so that repository is the governed one.
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error(`repository ${repository} is not a valid repository identity`);
 
 let results;
 try {
@@ -19,7 +17,7 @@ try {
   await report(`Ready pull-request refresh failed before completing the pass: ${error?.message ?? error}`);
   throw error;
 }
-if (results.length === 0) await report("Ready pull-request refresh: no open pull requests target develop.");
+if (results.length === 0) await report(`Ready pull-request refresh: no open pull requests target ${targetBranch()}.`);
 for (const result of results) {
   const evidence = {
     disposition: result.disposition,
@@ -42,7 +40,7 @@ async function request(path, { method = "GET", body, expected = [200] } = {}) {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${token}`,
       "x-github-api-version": "2022-11-28",
-      "user-agent": "a1-ready-pull-request-refresh",
+      "user-agent": "delivery-ready-pull-request-refresh",
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

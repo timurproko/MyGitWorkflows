@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { classifyDocumentationAutoMerge } from "./documentation-auto-merge.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 
 export const ARCHIVE_TASKS = Object.freeze({
   recordEvidence: "Record verified implementation acceptance and merge evidence for archive preparation.",
@@ -149,7 +150,7 @@ export function selectAcceptance(comments, implementation, headSha) {
 
 export function assertMergedImplementation(pull, repository, files, { allowDocumentation = false } = {}) {
   requireValue(typeof repository === "string" && /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository), "repository-identity");
-  requireValue(pull?.merged === true && pull.state === "closed" && pull.draft === false && pull.base?.ref === "develop"
+  requireValue(pull?.merged === true && pull.state === "closed" && pull.draft === false && pull.base?.ref === targetBranch()
     && pull.base.repo?.full_name === repository && pull.head?.repo?.full_name === repository, "implementation-merge");
   requireValue(Number.isSafeInteger(pull.number) && pull.number > 0 && SHA.test(pull.head.sha ?? "")
     && SHA.test(pull.merge_commit_sha ?? "") && Number.isFinite(Date.parse(pull.merged_at)), "implementation-commit");

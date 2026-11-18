@@ -1,6 +1,7 @@
 import { loadImplementationEvidence, loadArchiveEvidence, findImplementationValidation, validateVersion3Candidate } from "./openspec-archive-github.mjs";
 import { snapshotOpenSpec } from "./openspec-archive-staging.mjs";
 import { archiveFailure, parseImplementation, SHA } from "./openspec-archive-policy.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 import { ACCEPTANCE_ROOT, acceptancePath, acceptanceBranch, acceptanceBytes, acceptanceBlockers, artifactDigest,
   digest, taskInventory, parseAcceptanceRecord, verifyRecordBindings, assertAcceptanceDiff,
   assertManualAcceptanceMerge, requireAcceptance } from "./openspec-acceptance-policy.mjs";
@@ -116,7 +117,7 @@ export async function verifyAcceptanceRecord(reader, record, source, { requireCo
 
 export async function acceptancePulls(reader, record) {
   const branch = acceptanceBranch(record);
-  return await reader.pages(`/pulls?state=all&base=develop&head=${encodeURIComponent(`${reader.repository.split("/")[0]}:${branch}`)}`, 1000);
+  return await reader.pages(`/pulls?state=all&base=${encodeURIComponent(targetBranch())}&head=${encodeURIComponent(`${reader.repository.split("/")[0]}:${branch}`)}`, 1000);
 }
 
 export async function inspectAcceptanceCandidate(reader, pull, { requireComplete = true } = {}) {

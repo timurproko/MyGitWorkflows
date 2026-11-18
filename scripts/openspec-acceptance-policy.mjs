@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { archiveFailure, assertRepositoryPath, CHANGE, SHA, inspectTasks, strictJson, metadataBlock, parseAcceptance } from "./openspec-archive-policy.mjs";
 import { acceptanceChecklistDigest, parseImplementationAcceptanceChecks } from "./openspec-acceptance-checklist.mjs";
+import { targetBranch } from "./delivery-target.mjs";
 
 export const ACCEPTANCE_ROOT = "openspec/acceptance/";
 export const ACCEPTANCE_SIGNOFF = "Record maintainer acceptance by manually merging the acceptance PR.";
@@ -125,7 +126,7 @@ export function reconcileAcceptanceTasks(taskText, receipt, mapping) {
 
 export function assertAcceptanceDiff(pull, files, path, repository) {
   assertRepositoryPath(path);
-  requireAcceptance(pull.base?.ref === "develop" && pull.base.repo?.full_name === repository
+  requireAcceptance(pull.base?.ref === targetBranch() && pull.base.repo?.full_name === repository
     && pull.head?.repo?.full_name === repository && SHA.test(pull.head.sha ?? ""), "acceptance-pr-identity");
   requireAcceptance(pull.changed_files === 1 && files.length === 1 && files[0].status === "added"
     && files[0].filename === path && !files[0].previous_filename, "acceptance-diff-scope");

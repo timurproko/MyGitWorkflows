@@ -217,8 +217,8 @@ describe("ready pull-request refresh command", () => {
     await expect(runCommand({ GITHUB_TOKEN: "workflow-token" }, [])).rejects.toThrow(/App token/);
   });
 
-  it("refuses a repository other than the governed one", async () => {
-    await expect(runCommand({ BRANCH_REFRESH_TOKEN: "app", GITHUB_REPOSITORY: "someone/a1" }, [])).rejects.toThrow(/governed repository/);
+  it("refuses a malformed repository identity", async () => {
+    await expect(runCommand({ BRANCH_REFRESH_TOKEN: "app", GITHUB_REPOSITORY: "someone/a1/extra" }, [])).rejects.toThrow(/valid repository identity/);
   });
 
   it("reports each candidate and fails when a candidate failed", async () => {

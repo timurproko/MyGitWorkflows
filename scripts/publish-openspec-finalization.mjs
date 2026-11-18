@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -36,10 +36,10 @@ export async function main(args = process.argv.slice(2), environment = process.e
     throw archiveFailure("trusted-workflow-required");
   }
   const deadline = Date.now() + 9 * 60 * 1000;
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const definition = JSON.parse(await readFile(resolve(root, "config/github-repository-governance.json"), "utf8"));
-  const repository = environment.GITHUB_REPOSITORY ?? definition.repository;
-  if (repository !== definition.repository) throw archiveFailure("repository-identity");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // Security: the calling repository is the governed one; credentials are minted for it alone.
+  const repository = environment.GITHUB_REPOSITORY;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) throw archiveFailure("repository-identity");
   const reader = createArchiveReader({ repository, token: environment.GITHUB_TOKEN ?? environment.GH_TOKEN, deadline });
   let result;
   if (dryRun) {
