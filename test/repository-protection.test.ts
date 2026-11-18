@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DELIVERY_CHECK, buildRuleset, describeChanges, findLiveRuleset, formatProtection, loadDeclarations, protectRepository } from "../scripts/repository-protection.mjs";
+import { DELIVERY_CHECK, buildEventPolicy, buildRuleset, describePolicyChanges, describeChanges, findLiveRuleset, formatProtection, loadDeclarations, protectRepository } from "../scripts/repository-protection.mjs";
 
 const declarations = {
   "o/r": [
@@ -21,12 +21,13 @@ const legacyTags = { id: 9, name: "a1-protect-release-tags", target: "tag", enfo
   conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } }, rules: [{ type: "deletion" }, { type: "non_fast_forward" }] };
 const stray = { id: 11, name: "experiment", target: "branch", enforcement: "active", bypass_actors: [], conditions: { ref_name: { include: ["refs/heads/experiment"], exclude: [] } }, rules: [{ type: "deletion" }] };
 
-function fake(rulesets: any[], { classic = false } = {}) {
+function fake(rulesets: any[], { classic = false, policies = [] as any[] } = {}) {
   const calls: Array<[string, string, any?]> = [];
   const api = async (method: string, path: string, body?: unknown) => {
     calls.push([method, path, body]);
     if (method !== "GET") return {};
     if (path === "repos/o/r") return { default_branch: "develop" };
+    if (path === "repos/o/r/actions/policies") return { total_count: policies.length, policies };
     if (path === "repos/o/r/rulesets") return rulesets.map(({ id, name }) => ({ id, name }));
     if (path.endsWith("/protection")) { if (classic && path.includes("/branches/develop/")) return {}; throw new Error("404"); }
     return rulesets.find(ruleset => path === `repos/o/r/rulesets/${ruleset.id}`);
@@ -99,11 +100,37 @@ describe("repository protection", () => {
     expect(kept.notes).toEqual(["kept the classic branch protection rule on develop: protect-develop is not confirmed active"]);
   });
 
+  it("installs one Actions policy that allows the declared workflows their events", async () => {
+    const events = { kind: "workflow-events", workflows: [".github/workflows/delivery.yml"], events: ["workflow_run", "pull_request_target"] };
+    const desired = buildEventPolicy(events);
+    expect(desired).toEqual({
+      name: "allow-delivery-events", enforcement: "active",
+      conditions: { workflow_path: { include: [".github/workflows/delivery.yml"], exclude: [] } },
+      rules: [{ type: "restrict_action_events", parameters: { allowed_events: ["pull_request_target", "workflow_run"] } }],
+    });
+    expect(describePolicyChanges({ ...desired, id: 3 }, desired)).toEqual([]);
+    expect(describePolicyChanges({ ...desired, id: 3, enforcement: "disabled", conditions: {} }, desired))
+      .toEqual(["enforcement disabled -> active", "workflows all workflows -> .github/workflows/delivery.yml"]);
+
+    const only = { "o/r": [events] };
+    const fresh = fake([]);
+    const created = await protectRepository({ repository: "o/r", api: fresh.api, declarations: only, apply: true });
+    expect(created.rulesets).toEqual([{ name: "Actions policy allow-delivery-events", changes: ["create it"] }]);
+    expect(fresh.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["POST repos/o/r/actions/policies"]);
+
+    const present = fake([], { policies: [{ ...desired, id: 3, rules: [{ type: "restrict_action_events", parameters: { allowed_events: ["pull_request_target"] } }] }] });
+    await protectRepository({ repository: "o/r", api: present.api, declarations: only, apply: true });
+    expect(present.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["PUT repos/o/r/actions/policies/3"]);
+  });
+
   it("ships a declaration file whose every entry builds", async () => {
     const shipped = await loadDeclarations();
     for (const [repository, list] of Object.entries(shipped)) {
       expect(repository).toMatch(/^[\w.-]+\/[\w.-]+$/);
-      for (const declaration of list as any[]) expect(buildRuleset(declaration, "main").name).toMatch(/^protect-/);
+      for (const declaration of list as any[]) {
+        if (declaration.kind === "workflow-events") expect(buildEventPolicy(declaration).conditions.workflow_path.include.length).toBeGreaterThan(0);
+        else expect(buildRuleset(declaration, "main").name).toMatch(/^protect-/);
+      }
     }
   });
 });

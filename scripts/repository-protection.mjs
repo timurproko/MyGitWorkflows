@@ -55,6 +55,31 @@ export function buildRuleset(declaration, defaultBranch) {
   throw new Error(`unknown ruleset kind: ${declaration.kind}`);
 }
 
+/**
+ * GitHub blocks `pull_request_target` in public repositories unless an Actions policy allows it. This builds the
+ * policy that lets exactly the declared workflow files run on exactly the declared events.
+ */
+export function buildEventPolicy(declaration) {
+  return {
+    name: "allow-delivery-events",
+    enforcement: "active",
+    conditions: { workflow_path: { include: [...declaration.workflows].sort(), exclude: [] } },
+    rules: [{ type: "restrict_action_events", parameters: { allowed_events: [...declaration.events].sort() } }],
+  };
+}
+
+/** Differences between a live Actions policy and the desired one; empty when they agree. */
+export function describePolicyChanges(existing, desired) {
+  if (!existing) return ["create it"];
+  const paths = policy => [...(policy.conditions?.workflow_path?.include ?? [])].sort().join(", ") || "all workflows";
+  const events = policy => [...(policy.rules?.find(rule => rule.type === "restrict_action_events")?.parameters?.allowed_events ?? [])].sort().join(", ") || "none";
+  const changes = [];
+  if (existing.enforcement !== desired.enforcement) changes.push(`enforcement ${existing.enforcement} -> ${desired.enforcement}`);
+  if (paths(existing) !== paths(desired)) changes.push(`workflows ${paths(existing)} -> ${paths(desired)}`);
+  if (events(existing) !== events(desired)) changes.push(`events ${events(existing)} -> ${events(desired)}`);
+  return changes;
+}
+
 const refs = (ruleset, defaultBranch) => (ruleset?.conditions?.ref_name?.include ?? [])
   .map(ref => ref === DEFAULT_BRANCH ? `refs/heads/${defaultBranch}` : ref).sort().join(",");
 
@@ -108,7 +133,18 @@ export async function protectRepository({ repository, apply = false, api = defau
   for (const entry of await api("GET", `repos/${repository}/rulesets`)) live.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
   const managed = new Set();
   const rulesets = [];
-  for (const declaration of declared) {
+  for (const declaration of declared.filter(item => item.kind === "workflow-events")) {
+    const desired = buildEventPolicy(declaration);
+    const policies = (await api("GET", `repos/${repository}/actions/policies`))?.policies ?? [];
+    const existing = policies.find(policy => policy.name === desired.name) ?? null;
+    const changes = describePolicyChanges(existing, desired);
+    if (apply && changes.length > 0) {
+      if (existing) await api("PUT", `repos/${repository}/actions/policies/${existing.id}`, desired);
+      else await api("POST", `repos/${repository}/actions/policies`, desired);
+    }
+    rulesets.push({ name: `Actions policy ${desired.name}`, changes });
+  }
+  for (const declaration of declared.filter(item => item.kind !== "workflow-events")) {
     const desired = buildRuleset(declaration, defaultBranch);
     const existing = findLiveRuleset(live, desired, defaultBranch);
     if (existing) managed.add(existing.id);
@@ -153,7 +189,9 @@ export function formatProtection(result) {
 }
 
 async function defaultApi(method, path, body) {
-  const child = run("gh", ["api", "-X", method, path, ...(body ? ["--input", "-"] : [])], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  // Protocol: the Actions policies endpoints are served from this API version onwards.
+  const version = path.includes("/actions/policies") ? ["-H", "X-GitHub-Api-Version: 2026-03-10"] : [];
+  const child = run("gh", ["api", "-X", method, ...version, path, ...(body ? ["--input", "-"] : [])], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
   if (body) child.child.stdin.end(JSON.stringify(body));
   const { stdout } = await child;
   return stdout.trim() ? JSON.parse(stdout) : null;
