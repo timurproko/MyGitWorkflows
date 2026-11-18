@@ -1,0 +1,16 @@
+{
+  "name": "my-git-workflows",
+  "private": true,
+  "type": "module",
+  "description": "Shared change-delivery workflow: PR automation, agent skill, worktree cleanup",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fission-ai/openspec": "1.11.0"
+  },
+  "devDependencies": {
+    "vitest": "3.2.7"
+  }
+}
