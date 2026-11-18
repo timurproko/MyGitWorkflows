@@ -8,8 +8,8 @@ const SKILL = "change-delivery";
 const SKILL_ROOTS = [join(".claude", "skills"), join(".agents", "skills")];
 
 /**
- * Link the shared skill into the user-level agent folders. A link, not a copy, so pulling this
- * repository updates every agent in every repository at once. Returns one report line per folder.
+ * Link the shared skill into the user-level agent folders. A link, not a copy, so updating the linked
+ * checkout updates every agent in every repository at once. Returns one report line per folder.
  */
 export async function install({ home = homedir(), source = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", SKILL) } = {}) {
   const lines = [];
@@ -29,4 +29,26 @@ export async function install({ home = homedir(), source = resolve(dirname(fileU
     lines.push(`linked ${target} -> ${source}`);
   }
   return lines;
+}
+
+/**
+ * Install for a machine: download or update the managed copy, link its skill, and put its `delivery`
+ * command on the PATH. With `dev`, link the checkout this runs from instead, for working on the workflow.
+ */
+export async function installEverything({ home = homedir(), dev = false, link = linkCommand, url } = {}) {
+  const { currentRoot, ensureManagedCopy, managedRoot } = await import("./managed-copy.mjs");
+  const lines = [];
+  const root = dev ? currentRoot() : managedRoot(home);
+  if (!dev) lines.push(await ensureManagedCopy({ home, ...(url ? { url } : {}) }));
+  lines.push(...await install({ home, source: join(root, "skills", SKILL) }));
+  lines.push(await link(root));
+  return lines;
+}
+
+// Rationale: `npm link` is the portable way to put a command on the PATH on Windows, macOS and Linux alike.
+async function linkCommand(root) {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  await promisify(execFile)("npm", ["link", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: root, shell: true, windowsHide: true });
+  return `linked the delivery command -> ${root}`;
 }

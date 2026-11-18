@@ -27,17 +27,24 @@ The target branch is the repository's default branch. Nothing else is configured
 ## Local setup, once per machine
 
 ```bash
-git clone git@github.com:timurproko/MyGitWorkflows.git && cd MyGitWorkflows && npm install && npm link && delivery install
+git clone https://github.com/timurproko/MyGitWorkflows.git ~/.config/git-workflows && node ~/.config/git-workflows/bin/delivery.mjs install
 ```
 
-`npm link` puts the `delivery` command on the path, and `delivery install` links the shared skill into
-`~/.claude/skills` and `~/.agents/skills`. Both are links, so `git pull` here updates every agent in every repository.
+Every agent and command on the machine reads the workflow from that one managed copy, `~/.config/git-workflows`.
+`delivery install` links its skill into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
+the path. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
+immediately, so nobody pulls by hand. A failed update (offline, local edits) is reported in one line and never
+blocks a command.
+
+A separate clone is only for developing the workflow. `delivery install --dev` from such a clone links that clone
+instead; run `delivery install` again to return to the managed copy.
 
 | Command | Purpose |
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
-| `delivery install` | Link the shared skill into the user-level agent folders |
+| `delivery install` | Download or update the managed copy and link its skill and command |
+| `delivery update` | Fast-forward the managed copy now |
 
 ## Layout
 
