@@ -33,7 +33,7 @@ git clone https://github.com/timurproko/MyGitWorkflows.git ~/.config/git-workflo
 Every agent and command on the machine reads the workflow from that one managed copy, `~/.config/git-workflows`.
 `delivery install` links its skill into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
 the path. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
-immediately, so nobody pulls by hand. A failed update (offline, local edits) is reported in one line and never
+immediately, so nobody pulls by hand. A failed update (offline, no access) is reported in one line and never
 blocks a command.
 
 A separate clone is only for developing the workflow. `delivery install --dev` from such a clone links that clone
