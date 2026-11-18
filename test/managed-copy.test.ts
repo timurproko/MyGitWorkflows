@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { installEverything } from "../scripts/install.mjs";
-import { ensureManagedCopy, managedRoot, refreshManagedCopy } from "../scripts/managed-copy.mjs";
+import { disableClaudeAttribution, installEverything } from "../scripts/install.mjs";
+import { ensureManagedCopy, legacyRoot, managedRoot, refreshManagedCopy } from "../scripts/managed-copy.mjs";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -43,6 +43,22 @@ describe("managed copy", () => {
     await publish(origin, "name: change-delivery\nversion two\n");
     expect(await ensureManagedCopy({ home, url: origin })).toContain("updated");
     expect(await readFile(skill, "utf8")).toContain("version two");
+  });
+
+  it("moves a machine off the earlier location and turns Claude Code attribution off once", async () => {
+    const { origin, home } = await upstream();
+    await mkdir(join(legacyRoot(home), "skills"), { recursive: true });
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude", "settings.json"), JSON.stringify({ theme: "dark", attribution: { other: 1 } }));
+    const lines = await installEverything({ home, url: origin, link: async () => "linked the delivery command" });
+    expect(managedRoot(home)).toBe(join(home, ".workflow"));
+    expect(existsSync(legacyRoot(home))).toBe(false);
+    expect(lines.at(-1)).toContain("removed the earlier copy");
+    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8")))
+      .toEqual({ theme: "dark", attribution: { other: 1, commit: "", pr: "" }, includeCoAuthoredBy: false });
+    expect(await disableClaudeAttribution({ home })).toContain("already off");
+    await writeFile(join(home, ".claude", "settings.json"), "{ not json");
+    expect(await disableClaudeAttribution({ home })).toContain("not valid JSON");
   });
 
   it("refreshes the managed copy at most hourly and never touches another checkout", async () => {

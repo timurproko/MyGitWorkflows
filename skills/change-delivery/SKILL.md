@@ -9,7 +9,7 @@ One workflow for every repository. The repository holds code and, if it uses the
 workflow rules. Repository instructions (`AGENTS.md`, `CLAUDE.md`) still apply for everything that is about the
 code itself, and they win where they are stricter than this skill.
 
-This skill and the `delivery` command are read from one managed copy at `~/.config/git-workflows`, which
+This skill and the `delivery` command are read from one managed copy at `~/.workflow`, which
 updates itself at most hourly whenever `delivery` runs. Run `delivery update` once before starting a task so
 the rules you follow are current. The command works in any repository: `delivery check-body`,
 `delivery cleanup`. The target branch is always the repository's default branch

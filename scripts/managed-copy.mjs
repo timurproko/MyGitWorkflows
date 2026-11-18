@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { stat, utimes } from "node:fs/promises";
+import { rm, stat, utimes } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,24 @@ const STAMP = "FETCH_HEAD";
 
 /** The one place every agent and command on a machine reads the shared workflow from. */
 export function managedRoot(home = homedir()) {
+  return join(home, ".workflow");
+}
+
+/** Where earlier versions kept the managed copy. */
+export function legacyRoot(home = homedir()) {
   return join(home, ".config", "git-workflows");
+}
+
+/** Remove the earlier location once nothing points at it. Returns a report line, or `null` when there was none. */
+export async function removeLegacyCopy({ home = homedir() } = {}) {
+  const legacy = legacyRoot(home);
+  if (!await stat(legacy).catch(() => null)) return null;
+  try {
+    await rm(legacy, { recursive: true, force: true, maxRetries: 3 });
+    return `removed the earlier copy ${legacy}`;
+  } catch (error) {
+    return `could not remove the earlier copy ${legacy} (${error.code ?? error.message}); delete it by hand`;
+  }
 }
 
 /** The checkout this file runs from. */
@@ -29,7 +46,7 @@ export async function ensureManagedCopy({ home = homedir(), url = SOURCE_URL, gi
     await synchronize(git, root);
     return `updated ${root}`;
   }
-  await git(dirname(dirname(root)), ["clone", "--quiet", url, root]);
+  await git(dirname(root), ["clone", "--quiet", url, root]);
   return `downloaded ${root}`;
 }
 

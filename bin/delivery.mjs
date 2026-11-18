@@ -9,9 +9,9 @@ const USAGE = `Usage: delivery <command>
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees
   protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
                                             in protection/repositories.json
-  install [--dev]                           Download the shared workflow to ~/.config/git-workflows and link
+  install [--dev]                           Download the shared workflow to ~/.workflow and link
                                             its skill and this command from there; --dev links this checkout
-  update                                    Fast-forward ~/.config/git-workflows now (otherwise hourly)
+  update                                    Fast-forward ~/.workflow now (otherwise hourly)
 `;
 
 const [command, ...args] = process.argv.slice(2);

@@ -27,12 +27,12 @@ The target branch is the repository's default branch. Nothing else is configured
 ## Local setup, once per machine
 
 ```bash
-git clone https://github.com/timurproko/MyGitWorkflows.git ~/.config/git-workflows && node ~/.config/git-workflows/bin/delivery.mjs install
+git clone https://github.com/timurproko/MyGitWorkflows.git ~/.workflow && node ~/.workflow/bin/delivery.mjs install
 ```
 
-Every agent and command on the machine reads the workflow from that one managed copy, `~/.config/git-workflows`.
+Every agent and command on the machine reads the workflow from that one managed copy, `~/.workflow`.
 `delivery install` links its skill into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
-the path. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
+the path, and turns Claude Code commit and pull-request attribution off in `~/.claude/settings.json`. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
 immediately, so nobody pulls by hand. A failed update (offline, no access) is reported in one line and never
 blocks a command.
 
