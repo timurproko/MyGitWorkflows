@@ -7,6 +7,8 @@ const USAGE = `Usage: delivery <command>
   check-body --body-file <path> [--final]   Validate a pull-request body before pushing it
   check-body --pr <number> [--final]        Validate the current body of a pull request
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees
+  protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
+                                            in protection/repositories.json
   install [--dev]                           Download the shared workflow to ~/.config/git-workflows and link
                                             its skill and this command from there; --dev links this checkout
   update                                    Fast-forward ~/.config/git-workflows now (otherwise hourly)
@@ -29,6 +31,15 @@ try {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" }, path: { type: "string" } } });
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
+  } else if (command === "protect") {
+    const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" } } });
+    const { formatProtection, protectRepository } = await import("../scripts/repository-protection.mjs");
+    let repository = values.repo;
+    if (!repository) {
+      const { execFileSync } = await import("node:child_process");
+      repository = execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], { encoding: "utf8" }).trim();
+    }
+    console.log(formatProtection(await protectRepository({ repository, apply: Boolean(values.apply) })));
   } else if (command === "install") {
     const { values } = parseArgs({ args, options: { dev: { type: "boolean" } } });
     const { installEverything } = await import("../scripts/install.mjs");

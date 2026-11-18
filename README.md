@@ -45,6 +45,22 @@ instead; run `delivery install` again to return to the managed copy.
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
+| `delivery protect --repo <owner/name>` | Compare the repository rulesets with their declaration; `--apply` sets them |
+
+## Branch and tag protection
+
+`protection/repositories.json` declares the GitHub rulesets of every repository. `delivery protect --repo <owner/name>`
+shows how the live rulesets differ from that declaration, and `--apply` makes them match. To change protection,
+edit the file, merge it, and apply again; nothing is configured by hand in GitHub.
+
+| Kind | Ruleset name | What it enforces |
+| --- | --- | --- |
+| `default-branch` | `protect-<default branch>` | No deletion or force push, pull request required, the repository's test checks plus `delivery / Delivery check`, branch up to date, and the repository admin may bypass for pull requests only. Options: `checks`, `mergeMethods`, `linearHistory`, `delivery: false` until the repository calls the shared workflow. |
+| `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. |
+| `release-tags` | `protect-release-tags` | No deletion or movement of `v*` tags except by the listed release Apps. |
+
+An existing ruleset that governs the same refs is renamed and updated in place. A ruleset that is not declared is
+reported and left alone.
 
 ## Layout
 

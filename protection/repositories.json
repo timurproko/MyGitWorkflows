@@ -1,0 +1,10 @@
+{
+  "timurproko/a1": [
+    { "kind": "default-branch", "checks": ["Development validation required"], "mergeMethods": ["merge", "squash"] },
+    { "kind": "branch", "branch": "master" },
+    { "kind": "release-tags", "pattern": "v*", "bypassApps": [4942462] }
+  ],
+  "timurproko/xrbuild": [
+    { "kind": "default-branch", "checks": ["CI required"], "mergeMethods": ["squash"], "linearHistory": true, "delivery": false }
+  ]
+}
