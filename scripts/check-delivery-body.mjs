@@ -8,6 +8,7 @@ import {
   assertImplementationOnlyProgress, parseImplementationAcceptanceScenarios, parseImplementationProgress,
 } from "./openspec-acceptance-checklist.mjs";
 import { archiveFailure, parseImplementation } from "./openspec-archive-policy.mjs";
+import { inspectPlainBody } from "./plain-delivery.mjs";
 
 /** Check every Implementation item so `--final` validates the body the author is about to complete. */
 function withImplementationChecked(body) {
@@ -27,7 +28,7 @@ export function inspectDeliveryBody(body, { final = false } = {}) {
   let complete = false;
   try {
     const implementation = parseImplementation(body);
-    if (!implementation) throw archiveFailure("unassociated");
+    if (!implementation) return inspectPlainBody(body, { final });
     if (implementation.version !== 3) throw archiveFailure(`legacy-version-${implementation.version}`);
     const progress = parseImplementationProgress(body);
     if (progress.format !== "checklist") throw archiveFailure("implementation-progress-legacy-draft");

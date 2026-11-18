@@ -136,7 +136,7 @@ export function assertImplementationOnlyProgress(items) {
   }
 }
 
-function assertVersion3BodyLayout(body, { allowLegacyPhaseLine = false } = {}) {
+function assertVersion3BodyLayout(body, { allowLegacyPhaseLine = false, linked = true } = {}) {
   const lines = normalizedBody(body).split("\n");
   const firstLine = lines.find(line => line.trim());
   const legacyPhaseLine = ["> Phase: Implementation", "> Phase: Acceptance"].includes(firstLine);
@@ -161,7 +161,7 @@ function assertVersion3BodyLayout(body, { allowLegacyPhaseLine = false } = {}) {
     const heading = /^## (\S.*)$/.exec(line);
     if (heading) headings.push({ name: heading[1], index });
   }
-  if (JSON.stringify(headings.map(({ name }) => name)) !== JSON.stringify(["Proposal", "Implementation", "Acceptance", "Automation"])) {
+  if (JSON.stringify(headings.map(({ name }) => name)) !== JSON.stringify(["Proposal", "Implementation", "Acceptance", ...(linked ? ["Automation"] : [])])) {
     throw archiveFailure("acceptance-layout-sections");
   }
   const proposalLines = lines.slice(headings[0].index + 1, headings[1].index).filter(line => line.trim());
@@ -169,12 +169,21 @@ function assertVersion3BodyLayout(body, { allowLegacyPhaseLine = false } = {}) {
   const sentenceCount = proposal.match(/[.!?](?=\s|$)/g)?.length ?? 0;
   if (!proposal || Buffer.byteLength(proposal) > 600 || proposalLines.some(line => /^(?:[-*+] |#|>|<)/.test(line))
     || sentenceCount < 1 || sentenceCount > 2 || !/[.!?]$/.test(proposal)) throw archiveFailure("acceptance-layout-proposal");
+  // Rationale: a delivery that links no OpenSpec change has nothing for automation to read, so it carries no Automation section.
+  if (!linked) return;
   const automation = lines.slice(headings[3].index + 1);
   const visible = automation.filter(line => line.trim());
   if (visible[0] !== "<details>" || visible[1] !== "<summary>Used by CI to link this PR to its OpenSpec change</summary>"
     || visible.at(-1) !== "</details>" || !automation.some(line => line === "```openspec-implementation")) {
     throw archiveFailure("acceptance-layout-automation");
   }
+}
+
+/** Validate the complete body of a delivery that links no OpenSpec change and return its Acceptance scenarios. */
+export function parsePlainAcceptanceScenarios(body) {
+  assertVersion3BodyLayout(body, { linked: false });
+  parseImplementationProgress(body, { requireComplete: true });
+  return parseAcceptanceSection(body, "Acceptance");
 }
 
 export function parseImplementationAcceptanceScenarios(body, version, { allowLegacyVersion3Phase = false } = {}) {

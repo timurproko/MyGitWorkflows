@@ -21,7 +21,7 @@ The `delivery` command comes from the shared workflow checkout and works in any 
 | Marking a linked PR ready, finalizing its OpenSpec change, refreshing ready PRs, deleting merged branches | Delivery bot |
 | Approving the plan, merging or arming auto-merge | Maintainer |
 
-Never mark a PR that links an OpenSpec change ready yourself. Never arm auto-merge. Never push to the default
+Never mark a PR ready yourself. Never arm auto-merge. Never push to the default
 branch. Implementation approval is not merge permission.
 
 ## 1. Start
@@ -110,7 +110,8 @@ ready, then commits `docs(openspec): finalize <change-id>` to the branch and rec
 Automation block. Always `git pull` before pushing again; never revert a finalization commit, push fixes on top.
 A fully ticked draft that stays draft means the bot refused it: read the `Delivery` workflow run for the reason.
 
-A PR that links no change is not promoted by the bot; tell the maintainer it is complete.
+A PR that links no change follows the same steps with the Automation section left out: the bot marks it ready
+when every outcome is ticked and the body is valid, and there is nothing to finalize.
 
 ## 5. CI and handoff
 

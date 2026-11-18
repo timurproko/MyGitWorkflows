@@ -11,6 +11,7 @@ import { prepareSinglePrDelivery, replaceImplementationMetadata } from "./opensp
 import { readCanonicalSpecs } from "./openspec-delivery-git.mjs";
 import { archiveFailure, archivePaths, assertArchiveDiff, parseImplementation, SHA } from "./openspec-archive-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
+import { promotePlainDraft } from "./plain-delivery.mjs";
 
 const execute = promisify(execFile);
 const ARCHIVE_ROOT = "openspec/changes/archive/";
@@ -70,7 +71,7 @@ async function archiveCapabilities(checkout, archive) {
   return found.sort();
 }
 
-function samePromotionSnapshot(current, expected, repository) {
+export function samePromotionSnapshot(current, expected, repository) {
   return current?.number === expected.number && current.state === "open" && current.draft === true
     && current.node_id === expected.node_id && current.body === expected.body
     && current.base?.ref === expected.base?.ref && current.base?.sha === expected.base?.sha
@@ -181,6 +182,7 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       const association = await inspectUnassociatedPull(reader, pull);
       if (association.blocked) throw archiveFailure(association.reason, association.changes.join(","));
     }
+    if (classified.skip === "unassociated" && pull.draft) return await promotePlainDraft({ reader, publisher, pull, number });
     return { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null };
   }
   const { implementation } = classified;

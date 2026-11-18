@@ -46,8 +46,9 @@ describe("delivery body check", () => {
       .toEqual({ ok: false, complete: false, reason: "draft-acceptance-checklist-item" });
   });
 
-  it("rejects bodies without a version-3 association", () => {
-    expect(inspectDeliveryBody("## Proposal\n\nNo automation.\n")).toEqual({ ok: false, complete: false, reason: "draft-unassociated" });
+  it("checks a body that links no change as a plain delivery", () => {
+    expect(inspectDeliveryBody("## Proposal\n\nNo automation.\n"))
+      .toEqual({ ok: false, complete: false, linked: false, reason: "draft-implementation-progress-missing" });
   });
 
   it("reads a body file or a pull request body", async () => {

@@ -52,5 +52,5 @@ git clone git@github.com:timurproko/MyGitWorkflows.git && cd MyGitWorkflows && n
 ## Status
 
 Extraction in progress. Done: promotion and finalization, the delivery check, ready-PR refresh, merged-branch
-deletion, the shared skill and local worktree cleanup. Not yet adopted by any repository.
-Still to come: promotion of drafts that link no OpenSpec change, and removal of the legacy version 1 and 2 paths.
+deletion, plain delivery without OpenSpec, the shared skill and local worktree cleanup. Not yet adopted by any repository.
+A repository without OpenSpec gets the same flow: its pull requests leave out the Automation section.
