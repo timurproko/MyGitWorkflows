@@ -18,7 +18,7 @@ for that PR, and only with green CI on its current head.
 
 ## Adopting it in a repository
 
-1. Install the delivery bot (GitHub App) on the repository and store its App id and private key as secrets.
+1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
 2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml` and set the two secret names.
 3. Protect the default branch and require two checks: the repository's own test check and `delivery / Delivery check`.
 

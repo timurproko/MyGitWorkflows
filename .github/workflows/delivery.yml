@@ -71,8 +71,8 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          OPENSPEC_ARCHIVE_APP_ID: ${{ secrets.app_id }}
-          OPENSPEC_ARCHIVE_APP_PRIVATE_KEY: ${{ secrets.app_private_key }}
+          DELIVERY_BOT_APP_ID: ${{ secrets.app_id }}
+          DELIVERY_BOT_PRIVATE_KEY: ${{ secrets.app_private_key }}
         run: |
           set -euo pipefail
           args=(--pr "$REQUESTED_PR")

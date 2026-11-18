@@ -52,8 +52,8 @@ export async function main(args = process.argv.slice(2), environment = process.e
     result = classified.skip ? { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null }
       : { disposition: "would-reconcile", head: pull.head.sha, change: classified.implementation.change };
   } else {
-    const publisher = await createArchivePublisher({ repository, appId: environment.OPENSPEC_ARCHIVE_APP_ID,
-      privateKey: environment.OPENSPEC_ARCHIVE_APP_PRIVATE_KEY, deadline });
+    const publisher = await createArchivePublisher({ repository, appId: environment.DELIVERY_BOT_APP_ID,
+      privateKey: environment.DELIVERY_BOT_PRIVATE_KEY, deadline });
     try {
       result = await reconcileFinalization({ reader, publisher, number, deadline,
         toolRoot: resolve(root, "node_modules/@fission-ai/openspec") });
