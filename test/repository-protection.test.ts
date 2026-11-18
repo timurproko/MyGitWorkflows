@@ -27,7 +27,8 @@ function fake(rulesets: any[], { classic = false, policies = [] as any[] } = {})
     calls.push([method, path, body]);
     if (method !== "GET") return {};
     if (path === "repos/o/r") return { default_branch: "develop" };
-    if (path === "repos/o/r/actions/policies") return { total_count: policies.length, policies };
+    if (path === "repos/o/r/actions/policies") return { total_count: policies.length, policies: policies.map(({ id, name, enforcement }) => ({ id, name, enforcement })) };
+    if (path.startsWith("repos/o/r/actions/policies/")) return policies.find(policy => path.endsWith(`/${policy.id}`));
     if (path === "repos/o/r/rulesets") return rulesets.map(({ id, name }) => ({ id, name }));
     if (path.endsWith("/protection")) { if (classic && path.includes("/branches/develop/")) return {}; throw new Error("404"); }
     return rulesets.find(ruleset => path === `repos/o/r/rulesets/${ruleset.id}`);

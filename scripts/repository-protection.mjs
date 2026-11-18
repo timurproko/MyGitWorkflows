@@ -136,7 +136,9 @@ export async function protectRepository({ repository, apply = false, api = defau
   for (const declaration of declared.filter(item => item.kind === "workflow-events")) {
     const desired = buildEventPolicy(declaration);
     const policies = (await api("GET", `repos/${repository}/actions/policies`))?.policies ?? [];
-    const existing = policies.find(policy => policy.name === desired.name) ?? null;
+    // Protocol: the list omits conditions and rules, so the matching policy is read in full before comparing.
+    const listed = policies.find(policy => policy.name === desired.name) ?? null;
+    const existing = listed ? await api("GET", `repos/${repository}/actions/policies/${listed.id}`) : null;
     const changes = describePolicyChanges(existing, desired);
     if (apply && changes.length > 0) {
       if (existing) await api("PUT", `repos/${repository}/actions/policies/${existing.id}`, desired);
