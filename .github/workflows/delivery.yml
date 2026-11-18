@@ -37,7 +37,8 @@ jobs:
     name: Promote or finalize the delivery
     if: >-
       github.event_name == 'workflow_dispatch'
-      || (github.event.action != 'closed' && github.event.pull_request.base.ref == github.event.repository.default_branch)
+      || (github.event_name == 'pull_request_target' && github.event.action != 'closed'
+      && github.event.pull_request.base.ref == github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -115,10 +116,13 @@ jobs:
 
   refresh:
     name: Refresh stale ready pull requests
+    # Rationale: a merge made with GITHUB_TOKEN emits no pull-request event, so a caller may also
+    # forward the completion of such a merging workflow through workflow_run.
     if: >-
-      github.event_name == 'pull_request_target' && github.event.action == 'closed'
+      github.event_name == 'workflow_run'
+      || (github.event_name == 'pull_request_target' && github.event.action == 'closed'
       && github.event.pull_request.merged == true
-      && github.event.pull_request.base.ref == github.event.repository.default_branch
+      && github.event.pull_request.base.ref == github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
