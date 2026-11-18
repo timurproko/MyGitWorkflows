@@ -15,7 +15,7 @@ on:
         type: boolean
         default: true
       tools_ref:
-        description: Ref of timurproko/MyGitWorkflows whose scripts run; keep equal to the ref in the caller's uses line
+        description: Ref of timurproko/MyWorkflows whose scripts run; keep equal to the ref in the caller's uses line
         type: string
         default: main
     secrets:
@@ -54,7 +54,7 @@ jobs:
       - name: Check out trusted delivery tooling
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          repository: timurproko/MyGitWorkflows
+          repository: timurproko/MyWorkflows
           ref: ${{ inputs.tools_ref }}
           persist-credentials: false
 
@@ -98,7 +98,7 @@ jobs:
       - name: Check out trusted delivery tooling
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          repository: timurproko/MyGitWorkflows
+          repository: timurproko/MyWorkflows
           ref: ${{ inputs.tools_ref }}
           persist-credentials: false
 
@@ -132,7 +132,7 @@ jobs:
       - name: Check out trusted delivery tooling
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          repository: timurproko/MyGitWorkflows
+          repository: timurproko/MyWorkflows
           ref: ${{ inputs.tools_ref }}
           persist-credentials: false
 
@@ -171,7 +171,7 @@ jobs:
       - name: Check out trusted delivery tooling
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          repository: timurproko/MyGitWorkflows
+          repository: timurproko/MyWorkflows
           ref: ${{ inputs.tools_ref }}
           persist-credentials: false
 

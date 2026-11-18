@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-export const SOURCE_URL = "https://github.com/timurproko/MyGitWorkflows.git";
+export const SOURCE_URL = "https://github.com/timurproko/MyWorkflows.git";
 const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 const STAMP = "FETCH_HEAD";
 

@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   delivery:
-    uses: timurproko/MyGitWorkflows/.github/workflows/delivery.yml@main
+    uses: timurproko/MyWorkflows/.github/workflows/delivery.yml@main
     with:
       pr: ${{ inputs.pr }}
       dry_run: ${{ inputs.dry_run || false }}

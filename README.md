@@ -1,4 +1,4 @@
-# MyGitWorkflows
+# MyWorkflows
 
 One implementation of the agent change-delivery workflow, shared by every repository that adopts it.
 A repository keeps its code and specs; the workflow lives here and is updated here.
@@ -27,7 +27,7 @@ The target branch is the repository's default branch. Nothing else is configured
 ## Local setup, once per machine
 
 ```bash
-git clone https://github.com/timurproko/MyGitWorkflows.git ~/.workflow && node ~/.workflow/bin/delivery.mjs install
+git clone https://github.com/timurproko/MyWorkflows.git ~/.workflow && node ~/.workflow/bin/delivery.mjs install
 ```
 
 Every agent and command on the machine reads the workflow from that one managed copy, `~/.workflow`.
