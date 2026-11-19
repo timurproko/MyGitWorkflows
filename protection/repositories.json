@@ -1,6 +1,9 @@
 {
   "timurproko/MyWorkflows": [
-    { "kind": "default-branch", "checks": ["Delivery tooling tests"], "delivery": false, "mergeMethods": ["merge", "squash"] }
+    { "kind": "default-branch", "checks": ["Delivery tooling tests"] },
+    { "kind": "workflow-events",
+      "workflows": [".github/workflows/self-delivery.yml"],
+      "events": ["pull_request_target", "workflow_dispatch"] }
   ],
   "timurproko/a1": [
     { "kind": "default-branch", "checks": ["Development validation required"], "mergeMethods": ["merge", "squash"] },
