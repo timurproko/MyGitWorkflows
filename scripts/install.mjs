@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SKILL = "change-delivery";
@@ -8,13 +8,13 @@ const SKILL = "change-delivery";
 const SKILL_ROOTS = [join(".claude", "skills"), join(".agents", "skills")];
 
 /**
- * Link the shared skill into the user-level agent folders. A link, not a copy, so updating the linked
- * checkout updates every agent in every repository at once. Returns one report line per folder.
+ * Link one skill folder into the user-level agent folders under its own name. A link, not a copy, so updating
+ * the linked checkout updates every agent in every repository at once. Returns one report line per folder.
  */
 export async function install({ home = homedir(), source = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", SKILL) } = {}) {
   const lines = [];
   for (const root of SKILL_ROOTS) {
-    const target = join(home, root, SKILL);
+    const target = join(home, root, basename(source));
     const existing = await lstat(target).catch(() => null);
     if (existing?.isSymbolicLink()) {
       if (resolve(await readlink(target)).replace(/[\\/]$/, "") === source) { lines.push(`already linked ${target}`); continue; }
@@ -32,15 +32,35 @@ export async function install({ home = homedir(), source = resolve(dirname(fileU
 }
 
 /**
+ * Generate the OpenSpec skills of the pinned version when they are missing or of another version, and link each
+ * into the agent folders. A failed generation is one report line: the workflow itself must still install.
+ */
+export async function installOpenspecSkills({ home = homedir(), root, generate } = {}) {
+  const { ensureOpenspecSkills, generatedSkills } = await import("./openspec-skills.mjs");
+  const lines = [];
+  // Rationale: a copy from before the single OpenSpec pin has no version to generate for; it catches up on update.
+  if (!await lstat(join(root, "package.json")).catch(() => null)) return lines;
+  try {
+    const line = await ensureOpenspecSkills({ root, ...(generate ? { generate } : {}) });
+    if (line) lines.push(line);
+  } catch (error) {
+    lines.push(`OpenSpec skills not generated: ${String(error.message).split("\n")[0]}`);
+  }
+  for (const source of await generatedSkills(root)) lines.push(...await install({ home, source }));
+  return lines;
+}
+
+/**
  * Install for a machine: download or update the managed copy, link its skill, and put its `delivery`
  * command on the PATH. With `dev`, link the checkout this runs from instead, for working on the workflow.
  */
-export async function installEverything({ home = homedir(), dev = false, link = linkCommand, url } = {}) {
+export async function installEverything({ home = homedir(), dev = false, link = linkCommand, url, generate } = {}) {
   const { currentRoot, ensureManagedCopy, managedRoot, removeLegacyCopy } = await import("./managed-copy.mjs");
   const lines = [];
   const root = dev ? currentRoot() : managedRoot(home);
   if (!dev) lines.push(await ensureManagedCopy({ home, ...(url ? { url } : {}) }));
   lines.push(...await install({ home, source: join(root, "skills", SKILL) }));
+  lines.push(...await installOpenspecSkills({ home, root, ...(generate ? { generate } : {}) }));
   lines.push(await link(root));
   lines.push(await disableClaudeAttribution({ home }));
   if (!dev) {

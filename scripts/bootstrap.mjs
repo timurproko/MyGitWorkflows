@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { disableClaudeAttribution, install, linkCommand } from "./install.mjs";
+import { disableClaudeAttribution, install, installOpenspecSkills, linkCommand } from "./install.mjs";
 import { ensureManagedCopy, managedRoot, refreshManagedCopy, SOURCE_URL } from "./managed-copy.mjs";
 
 const SKILL = "change-delivery";
@@ -23,6 +23,7 @@ export async function bootstrap({
   git,
   link = linkCommand,
   onPath = commandOnPath,
+  generate,
 } = {}) {
   const root = managedRoot(home);
   const lines = [];
@@ -47,6 +48,10 @@ export async function bootstrap({
 
   await step("skill link", async () => {
     const changed = (await install({ home, source: join(root, "skills", SKILL) })).filter((line) => !line.startsWith("already linked"));
+    return changed.join("\n");
+  });
+  await step("OpenSpec skills", async () => {
+    const changed = (await installOpenspecSkills({ home, root, ...(generate ? { generate } : {}) })).filter((line) => !line.startsWith("already linked"));
     return changed.join("\n");
   });
   await step("command link", async () => (await onPath(COMMAND) ? null : link(root)));
