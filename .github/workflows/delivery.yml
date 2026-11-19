@@ -35,10 +35,13 @@ env:
 jobs:
   finalize:
     name: Promote or finalize the delivery
+    # Rationale: GitHub gives a Dependabot pull request no Actions secrets, so the bot identity cannot be minted for
+    # it. Such a pull request opens ready and links no change: there is nothing to promote or finalize.
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event_name == 'pull_request_target' && github.event.action != 'closed'
-      && github.event.pull_request.base.ref == github.event.repository.default_branch)
+      && github.event.pull_request.base.ref == github.event.repository.default_branch
+      && github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

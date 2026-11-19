@@ -11,4 +11,11 @@ describe("this repository's own delivery", () => {
     const own = settings(await readFile(".github/workflows/self-delivery.yml", "utf8"));
     expect(own).toBe(template.replace("timurproko/MyWorkflows/.github/workflows/delivery.yml@main", "./.github/workflows/delivery.yml"));
   });
+
+  it("skips the credentialed job for Dependabot and still reports the delivery check", async () => {
+    const workflow = await readFile(".github/workflows/delivery.yml", "utf8");
+    const job = (from: string, to: string) => workflow.slice(workflow.indexOf(`\n  ${from}:`), workflow.indexOf(`\n  ${to}:`));
+    expect(job("finalize", "check")).toContain("github.event.pull_request.user.login != 'dependabot[bot]'");
+    expect(job("check", "refresh")).not.toContain("dependabot");
+  });
 });
