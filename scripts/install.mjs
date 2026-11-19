@@ -73,7 +73,7 @@ export async function disableClaudeAttribution({ home = homedir() } = {}) {
 }
 
 // Rationale: `npm link` is the portable way to put a command on the PATH on Windows, macOS and Linux alike.
-async function linkCommand(root) {
+export async function linkCommand(root) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   await promisify(execFile)("npm", ["link", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: root, shell: true, windowsHide: true });
