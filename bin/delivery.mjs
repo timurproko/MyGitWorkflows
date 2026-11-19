@@ -12,12 +12,14 @@ const USAGE = `Usage: delivery <command>
   install [--dev]                           Download the shared workflow to ~/.workflow and link
                                             its skill and this command from there; --dev links this checkout
   update                                    Fast-forward ~/.workflow now (otherwise hourly)
+  bootstrap                                 Make ~/.workflow present and current, quietly and without ever
+                                            failing; for a repository's install script or Git hook
 `;
 
 const [command, ...args] = process.argv.slice(2);
 
 try {
-  if (command && command !== "install" && command !== "update") {
+  if (command && command !== "install" && command !== "update" && command !== "bootstrap") {
     const { refreshManagedCopy } = await import("../scripts/managed-copy.mjs");
     const note = await refreshManagedCopy();
     if (note) console.error(note);
@@ -44,6 +46,9 @@ try {
     const { values } = parseArgs({ args, options: { dev: { type: "boolean" } } });
     const { installEverything } = await import("../scripts/install.mjs");
     for (const line of await installEverything({ dev: Boolean(values.dev) })) console.log(line);
+  } else if (command === "bootstrap") {
+    const { bootstrap } = await import("../scripts/bootstrap.mjs");
+    for (const line of await bootstrap()) console.error(line);
   } else if (command === "update") {
     const { refreshManagedCopy } = await import("../scripts/managed-copy.mjs");
     console.log(await refreshManagedCopy({ force: true }));
