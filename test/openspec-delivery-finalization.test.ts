@@ -78,6 +78,17 @@ async function treeReader(root: string, candidate?: { pull: unknown; files: unkn
 }
 
 describe("in-branch OpenSpec delivery finalization", () => {
+  it("finalizes the first change of a repository that has no archive folder", async () => {
+    const root = await fixture();
+    await rm(join(root, "openspec/changes/archive"), { recursive: true, force: true });
+    const bodyPath = join(root, "body.md");
+    await writeFile(bodyPath, body());
+    const written = await prepareSinglePrDelivery({ root, change: "example", repository: "owner/repo", sourcePr: 42, body: body(),
+      specBaseSha: "a".repeat(40), date: "2026-09-15", bodyPath, write: true, toolRoot: resolve("node_modules/@fission-ai/openspec") });
+    expect(written.disposition).toBe("finalized");
+    expect(await readFile(join(root, "openspec/changes/archive/2026-09-15-example/tasks.md"), "utf8")).toContain("[x]");
+  });
+
   it("prepares and writes one deterministic synchronized archive without remote mutation", async () => {
     const root = await fixture();
     const bodyPath = join(root, "body.md");
