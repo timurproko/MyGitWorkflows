@@ -10,7 +10,7 @@ function run(pull: Record<string, unknown>, overrides: Record<string, unknown> =
   const reader = { prefix: "/repos/owner/repo", repository: "owner/repo",
     get: async () => ({ number: 5, state: "open", draft: false, body: "", head: { sha: head }, ...pull }) };
   return checkDelivery({ reader, number: 5, expectedHead: head,
-    inspectUnassociated: async () => ({ blocked: false }), validateFinalized: async () => ({}), inspectAttribution: async () => null, ...overrides });
+    inspectUnassociated: async () => ({ blocked: false }), validateFinalized: async () => ({}), inspectAttribution: async () => null, inspectInstructions: async () => null, ...overrides });
 }
 
 describe("delivery check", () => {

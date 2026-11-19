@@ -3,6 +3,7 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { inspectAgentAttribution } from "./agent-attribution.mjs";
+import { inspectRepositoryInstructions } from "./repository-instructions.mjs";
 import { inspectUnassociatedPull } from "./openspec-association-policy.mjs";
 import { createArchiveReader, validateVersion3Candidate } from "./openspec-archive-github.mjs";
 import { parseImplementation, SHA } from "./openspec-archive-policy.mjs";
@@ -16,7 +17,7 @@ import { parseImplementation, SHA } from "./openspec-archive-policy.mjs";
  */
 export async function checkDelivery({ reader, number, expectedHead,
   inspectUnassociated = inspectUnassociatedPull, validateFinalized = validateVersion3Candidate,
-  inspectAttribution = inspectAgentAttribution }) {
+  inspectAttribution = inspectAgentAttribution, inspectInstructions = inspectRepositoryInstructions }) {
   if (!Number.isSafeInteger(number) || number < 1 || !SHA.test(expectedHead ?? "")) return fail("event-identity");
   const pull = await reader.get(`${reader.prefix}/pulls/${number}`);
   // Invariant: a decision certifies only the head this event named; a newer push receives its own run.
@@ -26,6 +27,9 @@ export async function checkDelivery({ reader, number, expectedHead,
   // Invariant: attribution is refused before anything else can pass, because a merge makes it permanent.
   const attribution = await inspectAttribution(reader, pull);
   if (attribution) return fail("agent-attribution", attribution);
+  // Invariant: delivery rules live in the shared workflow only, so a repository cannot grow its own beside them.
+  const instructions = await inspectInstructions(reader, pull);
+  if (instructions) return fail("repository-instructions", instructions);
 
   let implementation;
   try {
@@ -59,6 +63,7 @@ const EXPLANATION = {
   unlinked: "The pull request links no OpenSpec change and adds no active change, so nothing needs finalizing.",
   finalized: "The linked change is archived and its specifications are synchronized at this exact head.",
   closed: "The pull request is no longer open.",
+  "repository-instructions": "The pull request adds to what this repository tells agents. AGENTS.md is the shared template unchanged (delivery instructions --apply writes it), CLAUDE.md contains only @AGENTS.md, and no other agent instruction file is added or extended. Put what is specific to the repository in docs/, and propose a delivery rule in timurproko/MyWorkflows.",
   "agent-attribution": "A commit, the title or the body names an AI agent as author or co-author. Rewrite those commits under the maintainer identity without the trailer (git rebase, then git push --force-with-lease), so the squash merge cannot copy the agent into the contributors.",
 };
 

@@ -9,6 +9,8 @@ const USAGE = `Usage: delivery <command>
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees
   protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
                                             in protection/repositories.json
+  instructions [--apply]                    Report agent instruction files that differ from the shared template;
+                                            --apply writes AGENTS.md and CLAUDE.md
   install [--dev]                           Download the shared workflow to ~/.workflow and link
                                             its skill and this command from there; --dev links this checkout
   update                                    Fast-forward ~/.workflow now (otherwise hourly)
@@ -42,6 +44,13 @@ try {
       repository = execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], { encoding: "utf8" }).trim();
     }
     console.log(formatProtection(await protectRepository({ repository, apply: Boolean(values.apply) })));
+  } else if (command === "instructions") {
+    const { values } = parseArgs({ args, options: { apply: { type: "boolean" } } });
+    const { inspectCheckout, LEFT_FOR_REVIEW } = await import("../scripts/repository-instructions.mjs");
+    const result = await inspectCheckout({ apply: Boolean(values.apply) });
+    for (const line of result.lines) console.log(line);
+    if (result.ok) console.log(result.lines.length ? "Agent instructions now match the shared template." : "Agent instructions match the shared template.");
+    else { console.log(LEFT_FOR_REVIEW); process.exitCode = 1; }
   } else if (command === "install") {
     const { values } = parseArgs({ args, options: { dev: { type: "boolean" } } });
     const { installEverything } = await import("../scripts/install.mjs");

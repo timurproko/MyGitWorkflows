@@ -5,9 +5,20 @@ description: How to deliver any change to a repository through its pull-request 
 
 # Change delivery
 
-One workflow for every repository. The repository holds code and, if it uses them, OpenSpec specs; it holds no
-workflow rules. Repository instructions (`AGENTS.md`, `CLAUDE.md`) still apply for everything that is about the
-code itself, and they win where they are stricter than this skill.
+One workflow for every repository. This skill is the only source of delivery rules.
+
+## What a repository holds
+
+- `AGENTS.md` is the shared template, unchanged, and `CLAUDE.md` contains only `@AGENTS.md`. A repository has no
+  other agent instruction file. `delivery instructions` reports what differs; `--apply` writes the two files.
+- `README.md` holds the most important things to know about the repository, for people first and for agents too.
+  `docs/` holds the detail its owner maintains: how to build, run and test it, and what must stay private.
+  `openspec/specs/` is written by agents for agents and records what the product does; the owner does not read it.
+- A repository states no delivery rule, in any file: nothing about pull requests, drafts, merging, branches,
+  worktrees, handoff or cleanup. A rule found there is void. When a repository needs different delivery behaviour,
+  propose the change in `timurproko/MyWorkflows`; never add it to the repository.
+- The `Delivery check` fails with `repository-instructions` when a pull request edits `AGENTS.md` away from the
+  template or adds to another agent instruction file. Such a file may only be deleted or reduced.
 
 This skill and the `delivery` command are read from one managed copy at `~/.workflow`, which
 updates itself at most hourly whenever `delivery` runs. Run `delivery update` once before starting a task so
