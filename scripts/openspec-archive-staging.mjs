@@ -7,16 +7,17 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { archiveFailure, assertRepositoryPath, SHA } from "./openspec-archive-policy.mjs";
+import { openspecVersion } from "./openspec-version.mjs";
 
 const execute = promisify(execFile);
 const MAX_BLOB = 8 * 1024 * 1024;
 const MAX_TREE = 32 * 1024 * 1024;
-export const OPENSPEC_VERSION = "1.11.0";
 
 export async function loadArchiveTool(packageRoot, { deadline = Infinity } = {}) {
   const root = resolve(packageRoot);
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-  if (pkg.name !== "@fission-ai/openspec" || pkg.version !== OPENSPEC_VERSION) throw archiveFailure("openspec-version");
+  // Security: only the version this repository pins, and so reviewed and tested here, may finalize a change.
+  if (pkg.name !== "@fission-ai/openspec" || pkg.version !== await openspecVersion()) throw archiveFailure("openspec-version");
   const parser = await import(pathToFileURL(join(root, "dist/core/parsers/requirement-blocks.js")).href);
   const apply = await import(pathToFileURL(join(root, "dist/core/specs-apply.js")).href);
   const fences = await import(pathToFileURL(join(root, "dist/core/parsers/code-fence.js")).href);
