@@ -204,7 +204,11 @@ export async function prepareSinglePrDelivery({ root, change, repository, source
     if (!capabilities.length && status.artifacts.find(item => item.id === "specs")?.status !== "skipped") throw archiveFailure("delta-missing");
     const paths = archivePaths(change, date, capabilities);
     if (!refinalize && [...before.keys()].some(path => path.startsWith(paths.archive))) throw archiveFailure("archive-target-collision");
-    const oldArchives = new Set(await readdir(join(sandbox, "openspec/changes/archive")));
+    // Rationale: a repository that deleted its archive, or never had one, has no folder yet; the tool creates it.
+    const oldArchives = new Set(await readdir(join(sandbox, "openspec/changes/archive")).catch(error => {
+      if (error?.code === "ENOENT") return [];
+      throw error;
+    }));
     await tool.command(sandbox, ["archive", change, "--yes", "--json"]);
     const created = (await readdir(join(sandbox, "openspec/changes/archive"))).filter(name => !oldArchives.has(name));
     if (created.length !== 1) throw archiveFailure("archive-move");
