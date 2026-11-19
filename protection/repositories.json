@@ -1,4 +1,7 @@
 {
+  "timurproko/MyWorkflows": [
+    { "kind": "default-branch", "checks": ["Delivery tooling tests"], "delivery": false, "mergeMethods": ["merge", "squash"] }
+  ],
   "timurproko/a1": [
     { "kind": "default-branch", "checks": ["Development validation required"], "mergeMethods": ["merge", "squash"] },
     { "kind": "branch", "branch": "master" },
