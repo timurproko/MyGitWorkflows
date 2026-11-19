@@ -51,9 +51,18 @@ instead; run `delivery install` again to return to the managed copy.
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
+| `delivery openspec <arguments>` | Run OpenSpec at the version this repository pins |
 | `delivery instructions` | Report agent instruction files that differ from `templates/AGENTS.md`; `--apply` writes `AGENTS.md` and `CLAUDE.md` |
 | `delivery bootstrap` | What a repository's bootstrap file runs: download if missing, update hourly, relink only what is absent; silent when nothing changes and never fails |
 | `delivery protect --repo <owner/name>` | Compare the repository rulesets with their declaration; `--apply` sets them |
+
+## The OpenSpec version
+
+`package.json` here pins the one OpenSpec version. The delivery bot finalizes with it, `delivery openspec` runs it
+locally, and a repository's CI runs it through the `actions/openspec` action
+(`uses: timurproko/MyWorkflows/actions/openspec@main`), so no repository pins a version of its own. Dependabot opens a
+pull request here when a newer version is published; this repository's tests run against it, and merging it updates
+the bot, every machine and every repository's CI at once.
 
 ## Branch and tag protection
 

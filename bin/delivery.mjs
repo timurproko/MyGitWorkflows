@@ -11,6 +11,8 @@ const USAGE = `Usage: delivery <command>
                                             in protection/repositories.json
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
                                             --apply writes AGENTS.md and CLAUDE.md
+  openspec <arguments>                      Run OpenSpec at the version the shared workflow pins, for example
+                                            delivery openspec validate --all --strict
   install [--dev]                           Download the shared workflow to ~/.workflow and link
                                             its skill and this command from there; --dev links this checkout
   update                                    Fast-forward ~/.workflow now (otherwise hourly)
@@ -51,6 +53,9 @@ try {
     for (const line of result.lines) console.log(line);
     if (result.ok) console.log(result.lines.length ? "Agent instructions now match the shared template." : "Agent instructions match the shared template.");
     else { console.log(LEFT_FOR_REVIEW); process.exitCode = 1; }
+  } else if (command === "openspec") {
+    const { runOpenspec } = await import("../scripts/openspec-version.mjs");
+    process.exitCode = await runOpenspec(args);
   } else if (command === "install") {
     const { values } = parseArgs({ args, options: { dev: { type: "boolean" } } });
     const { installEverything } = await import("../scripts/install.mjs");
