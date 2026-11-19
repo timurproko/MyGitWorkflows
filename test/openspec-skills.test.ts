@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { installOpenspecSkills } from "../scripts/install.mjs";
-import { ensureOpenspecSkills, generatedSkills } from "../scripts/openspec-skills.mjs";
+import { ensureOpenspecSkills, generatedSkills, openspecInitArguments } from "../scripts/openspec-skills.mjs";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -66,5 +66,14 @@ describe("OpenSpec skills", () => {
     const { root, home } = await checkout();
     await rm(join(root, "package.json"));
     expect(await installOpenspecSkills({ home, root, generate: async () => { throw new Error("must not run"); } })).toEqual([]);
+  });
+});
+
+describe("the OpenSpec generation command", () => {
+  it("keeps the generated skills in the scratch project instead of installing them globally", () => {
+    const args = openspecInitArguments("2.1.0");
+    expect(args).toContain("@fission-ai/openspec@2.1.0");
+    expect(args.join(" ")).toContain("init --tools agents --scope project");
+    expect(args.at(-1)).toBe(".");
   });
 });

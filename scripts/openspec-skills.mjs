@@ -57,9 +57,17 @@ export async function ensureOpenspecSkills({ root, generate = generateWithOpensp
   }
 }
 
-// Rationale: the generic `agents` target writes plain skill folders that every agent reads.
+/**
+ * The OpenSpec command that writes the skills into `directory`. The generic `agents` target writes plain skill
+ * folders that every agent reads; `--scope project` keeps them in that folder, because from OpenSpec 2.1 a new
+ * project otherwise installs them globally on the machine, including the withheld skills.
+ */
+export function openspecInitArguments(version) {
+  return ["--yes", `${PACKAGE}@${version}`, "init", "--tools", "agents", "--scope", "project", "--no-animation", "."];
+}
+
 async function generateWithOpenspec(directory, version) {
-  const result = spawnSync("npx", ["--yes", `${PACKAGE}@${version}`, "init", "--tools", "agents", "--no-animation", "."], {
+  const result = spawnSync("npx", openspecInitArguments(version), {
     cwd: directory, stdio: "ignore", shell: process.platform === "win32", windowsHide: true, timeout: 180_000,
     env: { ...process.env, CI: "true", NO_COLOR: "1", OPENSPEC_TELEMETRY: "0" },
   });
