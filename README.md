@@ -21,7 +21,9 @@ for that PR, and only with green CI on its current head.
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
 2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml` and set the two secret names.
 3. Protect the default branch and require two checks: the repository's own test check and `delivery / Delivery check`.
-4. Copy `templates/workflow-bootstrap.mjs` to `scripts/workflow-bootstrap.mjs` and run it from the package manager's
+4. Run `delivery instructions --apply` to write `AGENTS.md` (the shared template) and `CLAUDE.md` (`@AGENTS.md`).
+   Move anything else agents were told into `docs/` and delete the old instruction files.
+5. Copy `templates/workflow-bootstrap.mjs` to `scripts/workflow-bootstrap.mjs` and run it from the package manager's
    `prepare` script (`node scripts/workflow-bootstrap.mjs`), and from a Git `pre-push` hook if the repository has
    hooks. Any agent that installs dependencies or pushes then gets the shared workflow on a machine that lacks it,
    and a current copy on one that has it. It does nothing on CI runners and never fails the command that runs it.
@@ -49,6 +51,7 @@ instead; run `delivery install` again to return to the managed copy.
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
+| `delivery instructions` | Report agent instruction files that differ from `templates/AGENTS.md`; `--apply` writes `AGENTS.md` and `CLAUDE.md` |
 | `delivery bootstrap` | What a repository's bootstrap file runs: download if missing, update hourly, relink only what is absent; silent when nothing changes and never fails |
 | `delivery protect --repo <owner/name>` | Compare the repository rulesets with their declaration; `--apply` sets them |
 
