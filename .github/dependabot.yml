@@ -1,0 +1,17 @@
+# Opens a pull request here when a newer OpenSpec, or another dependency, is published. This repository holds the one
+# OpenSpec version every adopting repository and the delivery bot use, so merging that pull request updates them all.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: chore
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
