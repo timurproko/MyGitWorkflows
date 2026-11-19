@@ -1,5 +1,5 @@
 # Copy to .github/workflows/delivery.yml in a repository that adopts the shared delivery workflow.
-# Replace the two secret names with wherever this repository stores the delivery bot's App id and key.
+# Use it unchanged: every repository stores the delivery bot's App id and key under these two names.
 name: Delivery
 
 on:

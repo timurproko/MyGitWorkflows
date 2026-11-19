@@ -19,8 +19,9 @@ for that PR, and only with green CI on its current head.
 ## Adopting it in a repository
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
-2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml` and set the two secret names.
-3. Protect the default branch and require two checks: the repository's own test check and `delivery / Delivery check`.
+2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml`, unchanged.
+3. Declare the repository in `protection/repositories.json` and run `delivery protect --repo <owner/name> --apply`:
+   the default branch then requires the repository's own test check and `delivery / Delivery check`.
 4. Run `delivery instructions --apply` to write `AGENTS.md` (the shared template) and `CLAUDE.md` (`@AGENTS.md`).
    Move anything else agents were told into `docs/` and delete the old instruction files.
 5. Copy `templates/workflow-bootstrap.mjs` to `scripts/workflow-bootstrap.mjs` and run it from the package manager's
@@ -81,10 +82,15 @@ edit the file, merge it, and apply again; nothing is configured by hand in GitHu
 | `default-branch` | `protect-<default branch>` | No deletion or force push, pull request required, the repository's test checks plus `delivery / Delivery check`, branch up to date, and the repository admin may bypass for pull requests only. Options: `checks`, `mergeMethods`, `linearHistory`, `delivery: false` until the repository calls the shared workflow. |
 | `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. |
 | `release-tags` | `protect-release-tags` | No deletion or movement of `v*` tags except by the listed release Apps. |
+| `workflow-events` | Actions policy `allow-delivery-events` | A public repository runs `pull_request_target` only where a policy allows it. This lets exactly the listed workflow files run on exactly the listed events. |
 
 An existing ruleset that governs the same refs is renamed and updated in place. An older classic branch protection
 rule on a declared branch is removed once the ruleset is confirmed active. A ruleset that is not declared is
 reported and left alone.
+
+GitHub offers rulesets on a private repository only on a paid plan. The private workspace repository of
+`timurproko/xrbuild` is therefore not declared: it runs the same delivery workflow and the same checks, and they
+advise without blocking a merge.
 
 ## Layout
 
@@ -98,7 +104,9 @@ reported and left alone.
 
 ## Status
 
-In use by `timurproko/a1`, `timurproko/xrbuild` and its private workspace repository. Covered: promotion and
+In use by `timurproko/a1`, `timurproko/xrbuild`, its private workspace repository, and this repository itself
+(`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line), so a change to the shared
+automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
 shared skill, local worktree cleanup and the machine bootstrap.
 A repository without OpenSpec gets the same flow: its pull requests leave out the Automation section.
