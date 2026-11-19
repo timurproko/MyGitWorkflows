@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { DELIVERY_CHECK, buildEventPolicy, buildRuleset, loadDeclarations } from "../scripts/repository-protection.mjs";
 
 /** A workflow file without its comment lines and its display name. */
 const settings = (text: string) => text.replace(/\r\n/g, "\n").split("\n")
@@ -17,5 +18,16 @@ describe("this repository's own delivery", () => {
     const job = (from: string, to: string) => workflow.slice(workflow.indexOf(`\n  ${from}:`), workflow.indexOf(`\n  ${to}:`));
     expect(job("finalize", "check")).toContain("github.event.pull_request.user.login != 'dependabot[bot]'");
     expect(job("check", "refresh")).not.toContain("dependabot");
+  });
+
+  it("protects main with the delivery check, squash merges only, and lets the caller's events run", async () => {
+    const declared = (await loadDeclarations())["timurproko/MyWorkflows"] as any[];
+    const rules = buildRuleset(declared.find(item => item.kind === "default-branch"), "main").rules;
+    expect(rules.find(rule => rule.type === "required_status_checks").parameters.required_status_checks.map((check: any) => check.context))
+      .toEqual(["Delivery tooling tests", DELIVERY_CHECK]);
+    expect(rules.find(rule => rule.type === "pull_request").parameters.allowed_merge_methods).toEqual(["squash"]);
+    const policy = buildEventPolicy(declared.find(item => item.kind === "workflow-events"));
+    expect(policy.conditions.workflow_path.include).toEqual([".github/workflows/self-delivery.yml"]);
+    expect(policy.rules[0].parameters.allowed_events).toEqual(["pull_request_target", "workflow_dispatch"]);
   });
 });
