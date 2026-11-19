@@ -37,7 +37,7 @@ git clone https://github.com/timurproko/MyWorkflows.git ~/.workflow && node ~/.w
 ```
 
 Every agent and command on the machine reads the workflow from that one managed copy, `~/.workflow`.
-`delivery install` links its skill into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
+`delivery install` links its skills into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
 the path, and turns Claude Code commit and pull-request attribution off in `~/.claude/settings.json`. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
 immediately, so nobody pulls by hand. A failed update (offline, no access) is reported in one line and never
 blocks a command.
@@ -63,6 +63,12 @@ locally, and a repository's CI runs it through the `actions/openspec` action
 (`uses: timurproko/MyWorkflows/actions/openspec@main`), so no repository pins a version of its own. Dependabot opens a
 pull request here when a newer version is published; this repository's tests run against it, and merging it updates
 the bot, every machine and every repository's CI at once.
+
+The OpenSpec skills agents use (propose, apply, explore, update) come from the same version. Each machine generates
+them with OpenSpec itself into the managed copy's ignored `.generated/` folder and links them next to
+`change-delivery`, and generates them again the first time it runs after the pinned version changes. No repository
+carries a copy. The skills that archive a change or synchronize specifications by hand are withheld, because the
+delivery bot does both.
 
 ## Branch and tag protection
 
