@@ -145,8 +145,11 @@ stop; a new attempt needs a new request.
   "Restore branch" on the PR page before reopening it.
 - Verify the PR merged and, for a linked change, that its archive and synced specs are on the default branch.
   Never edit a merged PR's body.
-- Leave the worktree first (in an A1 session: `a1 worktree detach`), then from the primary checkout run
-  `delivery cleanup` to see what would be removed and `delivery cleanup --apply` to remove it.
+- In an A1 session still attached to the merged task, run `a1 worktree complete`: it returns the session to the
+  primary checkout and then runs the repository's cleanup, so never clean the attached checkout yourself. Stay
+  attached until then; `a1 worktree detach` is only for switching tasks or an explicit request.
+- Otherwise leave the worktree first, then from the primary checkout run `delivery cleanup` to see what would be
+  removed and `delivery cleanup --apply` to remove it.
 - Cleanup removes a worktree and its local branch only when its PR merged and the checkout holds nothing else.
   It keeps anything with uncommitted or untracked files, unmerged commits, a `.artifacts/KEEP` marker or a
   separate Git repository inside it, and says why. Never delete a kept worktree by hand or with force; report

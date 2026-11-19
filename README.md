@@ -80,6 +80,7 @@ reported and left alone.
 
 ## Status
 
-Extraction in progress. Done: promotion and finalization, the delivery check, ready-PR refresh, merged-branch
-deletion, plain delivery without OpenSpec, the shared skill and local worktree cleanup. Not yet adopted by any repository.
+In use by `timurproko/a1`, `timurproko/xrbuild` and its private workspace repository. Covered: promotion and
+finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
+shared skill, local worktree cleanup and the machine bootstrap.
 A repository without OpenSpec gets the same flow: its pull requests leave out the Automation section.
