@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupWorktrees, formatReport, parseWorktrees } from "../scripts/worktree-cleanup.mjs";
+import { cleanupWorktrees, finishWorktree, formatFinish, formatReport, parseWorktrees } from "../scripts/worktree-cleanup.mjs";
 
 const run = promisify(execFile);
 const roots: string[] = [];
@@ -109,5 +109,78 @@ describe("worktree cleanup", () => {
     const report = await cleanupWorktrees({ cwd: primary, only: worktrees.two.path,
       findMergedPull: merged({ "feat/one": worktrees.one.head, "feat/two": worktrees.two.head }) });
     expect(report.results.map(result => result.branch)).toEqual(["feat/two"]);
+  });
+});
+
+describe("finish", () => {
+  it("removes one merged worktree and its branch, named by folder, branch or path", async () => {
+    const { primary, worktrees } = await repository("one", "two", "three", "other");
+    const findMergedPull = merged({ "feat/one": worktrees.one.head, "feat/two": worktrees.two.head,
+      "feat/three": worktrees.three.head, "feat/other": worktrees.other.head });
+    for (const [name, target] of [["one", "one"], ["two", "feat/two"], ["three", worktrees.three.path]]) {
+      const result = await finishWorktree({ cwd: primary, target, findMergedPull });
+      expect(result).toMatchObject({ removed: true, branchRemoved: true, forced: false });
+      expect(formatFinish(result)).toContain("pull request #7 merged; worktree removed, branch deleted");
+      expect(existsSync(worktrees[name].path)).toBe(false);
+      expect(await git(primary, "branch", "--list", `feat/${name}`)).toBe("");
+    }
+    expect(existsSync(worktrees.other.path)).toBe(true);
+    await expect(finishWorktree({ cwd: primary, target: "missing", findMergedPull })).rejects.toThrow("no linked worktree matches missing");
+  });
+
+  it("keeps what cleanup keeps and says that --force would discard it", async () => {
+    const { primary, worktrees } = await repository("dirty", "open");
+    await writeFile(join(worktrees.dirty.path, "dirty.txt"), "changed");
+    const findMergedPull = merged({ "feat/dirty": worktrees.dirty.head });
+    const dirty = await finishWorktree({ cwd: primary, target: "dirty", findMergedPull });
+    expect(dirty).toMatchObject({ removed: false, reason: "uncommitted or untracked files", forceable: true });
+    expect(formatFinish(dirty)).toContain("Nothing was removed.");
+    expect(formatFinish(dirty)).toContain("--force");
+    const open = await finishWorktree({ cwd: primary, target: "open", findMergedPull });
+    expect(open).toMatchObject({ removed: false, reason: "no merged pull request for this branch", forceable: true });
+    expect(existsSync(worktrees.dirty.path) && existsSync(worktrees.open.path)).toBe(true);
+  });
+
+  it("with force discards files but never commits that are not merged", async () => {
+    const { primary, worktrees } = await repository("dirty", "marked", "open", "ahead");
+    await writeFile(join(worktrees.dirty.path, "dirty.txt"), "changed");
+    await mkdir(join(worktrees.marked.path, ".artifacts"));
+    await writeFile(join(worktrees.marked.path, ".artifacts", "KEEP"), "");
+    const aheadMerged = worktrees.ahead.head;
+    await writeFile(join(worktrees.ahead.path, "later.txt"), "later");
+    await git(worktrees.ahead.path, "add", "-A");
+    await git(worktrees.ahead.path, "commit", "--quiet", "-m", "later");
+    const findMergedPull = merged({ "feat/dirty": worktrees.dirty.head, "feat/marked": worktrees.marked.head, "feat/ahead": aheadMerged });
+
+    for (const name of ["dirty", "marked"]) {
+      const result = await finishWorktree({ cwd: primary, target: name, force: true, findMergedPull });
+      expect(result).toMatchObject({ removed: true, branchRemoved: true, forced: true });
+      expect(existsSync(worktrees[name].path)).toBe(false);
+      expect(await git(primary, "branch", "--list", `feat/${name}`)).toBe("");
+    }
+    for (const name of ["open", "ahead"]) {
+      const result = await finishWorktree({ cwd: primary, target: name, force: true, findMergedPull });
+      expect(result).toMatchObject({ removed: true, branchRemoved: false, forced: true });
+      expect(formatFinish(result)).toContain(`branch feat/${name} kept, its commits are not in a merged pull request`);
+      expect(existsSync(worktrees[name].path)).toBe(false);
+      expect(await git(primary, "branch", "--list", `feat/${name}`)).toContain(`feat/${name}`);
+    }
+  });
+
+  it("never forces a lock, a separate repository or the worktree it runs in", async () => {
+    const { primary, worktrees } = await repository("locked", "nested", "current");
+    await git(primary, "worktree", "lock", worktrees.locked.path);
+    await mkdir(join(worktrees.nested.path, "private"));
+    await git(join(worktrees.nested.path, "private"), "init", "--quiet");
+    const findMergedPull = merged({ "feat/locked": worktrees.locked.head, "feat/nested": worktrees.nested.head, "feat/current": worktrees.current.head });
+    const reasons: Record<string, string> = { locked: "the worktree is locked", nested: "holds a separate Git repository at private",
+      current: "the command is running inside this worktree" };
+    for (const [name, reason] of Object.entries(reasons)) {
+      const cwd = name === "current" ? worktrees.current.path : primary;
+      const result = await finishWorktree({ cwd, target: worktrees[name].path, force: true, findMergedPull });
+      expect(result).toMatchObject({ removed: false, reason, forceable: false });
+      expect(formatFinish(result)).not.toContain("--force");
+      expect(existsSync(worktrees[name].path)).toBe(true);
+    }
   });
 });

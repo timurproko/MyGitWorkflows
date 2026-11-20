@@ -7,6 +7,10 @@ const USAGE = `Usage: delivery <command>
   check-body --body-file <path> [--final]   Validate a pull-request body before pushing it
   check-body --pr <number> [--final]        Validate the current body of a pull request
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees
+  finish <worktree> [--force]               Remove one task's worktree and its merged branch; the worktree is
+                                            named by path, by its folder under .worktrees/, or by its branch.
+                                            --force also discards its uncommitted, untracked and ignored
+                                            files, never commits that are not merged
   protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
                                             in protection/repositories.json
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
@@ -37,6 +41,13 @@ try {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" }, path: { type: "string" } } });
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
+  } else if (command === "finish") {
+    const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { force: { type: "boolean" } } });
+    if (positionals.length !== 1) throw new Error("name exactly one worktree: its path, its folder under .worktrees/, or its branch");
+    const { finishWorktree, formatFinish } = await import("../scripts/worktree-cleanup.mjs");
+    const result = await finishWorktree({ target: positionals[0], force: Boolean(values.force) });
+    console.log(formatFinish(result));
+    if (!result.removed || result.failure) process.exitCode = 1;
   } else if (command === "protect") {
     const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" } } });
     const { formatProtection, protectRepository } = await import("../scripts/repository-protection.mjs");
