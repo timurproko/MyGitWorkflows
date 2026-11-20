@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupWorktrees, finishWorktree, formatFinish, formatReport } from "../scripts/worktree-cleanup.mjs";
-import { formatPool, poolState, readPoolSetting, startWorktree, writePoolSetting } from "../scripts/worktree-pool.mjs";
+import { adoptLegacySettings, formatPool, poolState, readPoolSetting, startWorktree, writePoolSetting } from "../scripts/worktree-pool.mjs";
 
 const run = promisify(execFile);
 const roots: string[] = [];
@@ -90,6 +90,27 @@ describe("pooled worktrees setting", () => {
     expect(JSON.parse(await readFile(settings, "utf8"))).toEqual({ other: 1, pooledWorktrees: true });
     await writeFile(settings, "not json");
     await expect(readPoolSetting(settings)).rejects.toThrow("is not valid JSON");
+  });
+});
+
+describe("settings location", () => {
+  it("moves a settings file from its earlier place once, and keeps a newer one", async () => {
+    const { root } = await repository();
+    const file = join(root, "workflow", "settings.local.json"), legacy = join(root, "old", "delivery", "settings.json");
+    await mkdir(join(root, "old", "delivery"), { recursive: true });
+    await writeFile(legacy, JSON.stringify({ pooledWorktrees: false }));
+    await adoptLegacySettings(file, legacy);
+    expect(existsSync(legacy) || existsSync(join(root, "old", "delivery"))).toBe(false);
+    expect(await readPoolSetting(file)).toBe(false);
+
+    await mkdir(join(root, "old", "delivery"), { recursive: true });
+    await writeFile(legacy, JSON.stringify({ pooledWorktrees: true }));
+    await writeFile(join(root, "old", "delivery", "other.txt"), "kept");
+    await adoptLegacySettings(file, legacy);
+    expect(await readPoolSetting(file)).toBe(false);
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(join(root, "old", "delivery", "other.txt"))).toBe(true);
+    await adoptLegacySettings(file, legacy);
   });
 });
 

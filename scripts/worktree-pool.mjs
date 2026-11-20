@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { managedRoot } from "./managed-copy.mjs";
 import { canonical, defaultGit, parseWorktrees, poolSlots, samePath } from "./worktree-cleanup.mjs";
 
 const run = promisify(execFile);
@@ -17,9 +18,30 @@ const NAME = /^[a-z0-9][a-z0-9._-]*$/;
  * without uninstalling; it is the only switch, read on every run, so there is one answer for every
  * tool on the machine. A machine without treehouse always uses plain worktrees.
  */
-export const SETTINGS_FILE = join(homedir(), ".config", "delivery", "settings.json");
+// Rationale: the setting lives in the shared workflow's own folder, as a file Git ignores, so the
+// machine gets no second folder for one value and the managed copy still fast-forwards cleanly.
+export const SETTINGS_FILE = join(managedRoot(), "settings.local.json");
+/** Where the setting was kept for a short time; a file found there is moved once. */
+export const LEGACY_SETTINGS_FILE = join(homedir(), ".config", "delivery", "settings.json");
+const legacyOf = file => (file === SETTINGS_FILE ? LEGACY_SETTINGS_FILE : null);
+
+/** Move a settings file from its earlier place, unless the new place already has one. Never fails a command. */
+export async function adoptLegacySettings(file = SETTINGS_FILE, legacy = legacyOf(file)) {
+  if (!legacy) return;
+  try {
+    await readFile(legacy, "utf8");
+    try { await readFile(file, "utf8"); } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await mkdir(dirname(file), { recursive: true });
+      await rename(legacy, file);
+    }
+    await rm(legacy, { force: true });
+    await rmdir(dirname(legacy));
+  } catch { /* nothing to move, or its folder holds other files and stays */ }
+}
 
 async function readSettings(file) {
+  await adoptLegacySettings(file);
   let text;
   try { text = await readFile(file, "utf8"); } catch (error) {
     if (error.code === "ENOENT") return {};
