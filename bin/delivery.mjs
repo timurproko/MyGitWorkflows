@@ -19,6 +19,9 @@ const USAGE = `Usage: delivery <command>
                                             named by path, by its folder under .worktrees/, or by its branch.
                                             --force also discards its uncommitted, untracked and ignored
                                             files, never commits that are not merged
+  guard [<command>...]                      Refuse, with exit code 2, a shell command that creates a worktree
+                                            with Git; an agent's pre-command hook runs it, with the command
+                                            as arguments or as the hook's JSON on standard input
   pool [on|off] [--json]                    Show, or set, whether this machine uses pooled worktrees; they
                                             need treehouse installed
   protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
@@ -37,7 +40,8 @@ const USAGE = `Usage: delivery <command>
 const [command, ...args] = process.argv.slice(2);
 
 try {
-  if (command && command !== "install" && command !== "update" && command !== "bootstrap") {
+  // Rationale: the guard runs before every shell command of an agent, so it does nothing but read its input.
+  if (command && command !== "install" && command !== "update" && command !== "bootstrap" && command !== "guard") {
     const { refreshManagedCopy } = await import("../scripts/managed-copy.mjs");
     const note = await refreshManagedCopy();
     if (note) console.error(note);
@@ -66,6 +70,14 @@ try {
     const path = started.path.replaceAll("\\", "/");
     // --json is for a tool that hands its task checkouts to this command and must know whether the checkout is new.
     console.log(values.json ? JSON.stringify({ path, branch: started.branch, created: started.created, pooled: started.pooled }) : path);
+  } else if (command === "guard") {
+    const { readFileSync } = await import("node:fs");
+    const { guard } = await import("../scripts/worktree-guard.mjs");
+    let input = "";
+    if (!args.length && !process.stdin.isTTY) { try { input = readFileSync(0, "utf8"); } catch { /* no input: nothing to refuse */ } }
+    const refused = guard({ args, input });
+    // Exit code 2 is what a pre-command hook reads as "do not run this"; the text goes to the agent.
+    if (refused) { console.error(refused); process.exitCode = 2; }
   } else if (command === "pool") {
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: "boolean" } } });
     const { formatPool, poolState, writePoolSetting } = await import("../scripts/worktree-pool.mjs");
