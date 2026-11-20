@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { disableClaudeAttribution, install, installOpenspecSkills, linkCommand } from "./install.mjs";
 import { ensureManagedCopy, managedRoot, refreshManagedCopy, SOURCE_URL } from "./managed-copy.mjs";
+import { misplacedReport } from "./worktree-guard.mjs";
 
 const SKILL = "change-delivery";
 const COMMAND = "delivery";
@@ -24,6 +25,7 @@ export async function bootstrap({
   link = linkCommand,
   onPath = commandOnPath,
   generate,
+  misplaced = misplacedReport,
 } = {}) {
   const root = managedRoot(home);
   const lines = [];
@@ -55,6 +57,8 @@ export async function bootstrap({
     return changed.join("\n");
   });
   await step("command link", async () => (await onPath(COMMAND) ? null : link(root)));
+  // Said on every run until it is put right: a worktree made by hand in the repository this runs in.
+  await step("worktree report", async () => (await misplaced()).join("\n"));
   await step("attribution setting", async () => {
     const line = await disableClaudeAttribution({ home });
     return line.includes("already off") ? null : line;

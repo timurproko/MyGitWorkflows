@@ -51,6 +51,9 @@ try {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" }, path: { type: "string" } } });
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
+    // Worktrees made by hand are never cleaned up unasked; they are named so somebody replaces them.
+    const { misplacedReport } = await import("../scripts/worktree-guard.mjs");
+    for (const line of await misplacedReport()) console.log(line);
   } else if (command === "start") {
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { base: { type: "string" }, detach: { type: "string" }, json: { type: "boolean" } } });
     if (positionals.length !== (values.detach ? 0 : 1)) throw new Error("name exactly one branch as type/short-description, or one checkout with --detach");
@@ -58,6 +61,8 @@ try {
     const started = await startWorktree({ branch: positionals[0] ?? null, detach: values.detach ?? null, base: values.base ?? null });
     // The path alone on stdout, so a script can take it; the rest is for a reader.
     console.error(`${started.created ? "started" : "continuing"} ${started.branch ?? `${values.detach} (no branch)`} in ${started.pooled ? "a pool slot" : "a worktree"}`);
+    const { misplacedReport } = await import("../scripts/worktree-guard.mjs");
+    for (const line of await misplacedReport()) console.error(line);
     const path = started.path.replaceAll("\\", "/");
     // --json is for a tool that hands its task checkouts to this command and must know whether the checkout is new.
     console.log(values.json ? JSON.stringify({ path, branch: started.branch, created: started.created, pooled: started.pooled }) : path);
