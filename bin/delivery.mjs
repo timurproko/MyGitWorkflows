@@ -6,9 +6,12 @@ const USAGE = `Usage: delivery <command>
 
   check-body --body-file <path> [--final]   Validate a pull-request body before pushing it
   check-body --pr <number> [--final]        Validate the current body of a pull request
-  start <type>/<short-name>                 Start, or return to, one task's checkout and print its path: a slot
+  start <type>/<short-name> [--base <branch>]
+                                            Start, or return to, one task's checkout and print its path: a slot
                                             from the treehouse pool when pooled worktrees are on, else
                                             .worktrees/<short-name>, on a branch cut from origin's default
+                                            branch, or from --base
+  start --detach <name> [--base <branch>]   The same for a checkout without a branch, for reading only
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees; a pool slot
                                             is returned to its pool instead
   finish <worktree> [--force]               Remove one task's worktree and its merged branch; the worktree is
@@ -48,12 +51,12 @@ try {
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
   } else if (command === "start") {
-    const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
-    if (positionals.length !== 1) throw new Error("name exactly one branch, as type/short-description");
+    const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { base: { type: "string" }, detach: { type: "string" } } });
+    if (positionals.length !== (values.detach ? 0 : 1)) throw new Error("name exactly one branch as type/short-description, or one checkout with --detach");
     const { startWorktree } = await import("../scripts/worktree-pool.mjs");
-    const started = await startWorktree({ branch: positionals[0] });
+    const started = await startWorktree({ branch: positionals[0] ?? null, detach: values.detach ?? null, base: values.base ?? null });
     // The path alone on stdout, so a script can take it; the rest is for a reader.
-    console.error(`${started.created ? "started" : "continuing"} ${started.branch} in ${started.pooled ? "a pool slot" : "a worktree"}`);
+    console.error(`${started.created ? "started" : "continuing"} ${started.branch ?? `${values.detach} (no branch)`} in ${started.pooled ? "a pool slot" : "a worktree"}`);
     console.log(started.path.replaceAll("\\", "/"));
   } else if (command === "pool") {
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: "boolean" } } });
