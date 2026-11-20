@@ -55,7 +55,7 @@ instead; run `delivery install` again to return to the managed copy.
 | `delivery pool` | Say whether this machine uses pooled worktrees; `delivery pool on` and `delivery pool off` set it |
 
 Pooled worktrees need [treehouse](https://github.com/kunchenguid/treehouse) on the machine. Installing it turns them
-on; `~/.config/delivery/settings.json` (`"pooledWorktrees": false`) turns them off without uninstalling. A pooled
+on; `~/.workflow/settings.local.json` (`"pooledWorktrees": false`, a file Git ignores) turns them off without uninstalling. A pooled
 task works in a numbered slot that keeps its installed dependencies and build output for the next task.
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
