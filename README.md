@@ -49,8 +49,14 @@ instead; run `delivery install` again to return to the managed copy.
 | Command | Purpose |
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
-| `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
+| `delivery start <type>/<short-name>` | Start, or return to, one task's checkout and print its folder: `.worktrees/<short-name>`, or a pool slot when pooled worktrees are on |
+| `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them, and returns pool slots to their pool |
 | `delivery finish <worktree>` | Remove one task's worktree and its merged branch; `--force` also discards its uncommitted files, never unmerged commits |
+| `delivery pool` | Say whether this machine uses pooled worktrees; `delivery pool on` and `delivery pool off` set it |
+
+Pooled worktrees need [treehouse](https://github.com/kunchenguid/treehouse) on the machine. Installing it turns them
+on; `~/.config/delivery/settings.json` (`"pooledWorktrees": false`) turns them off without uninstalling. A pooled
+task works in a numbered slot that keeps its installed dependencies and build output for the next task.
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
 | `delivery openspec <arguments>` | Run OpenSpec at the version this repository pins |

@@ -40,8 +40,13 @@ branch. Implementation approval is not merge permission.
 ## 1. Start
 
 - Keep the primary checkout on the default branch. Do the work in its own worktree and branch:
-  in an A1 session use `a1 worktree enter <branch>`; otherwise
-  `git worktree add .worktrees/<short-name> -b <type>/<short-name> origin/<default-branch>`.
+  in an A1 session use `a1 worktree enter <branch>`; otherwise run `delivery start <type>/<short-name>` from
+  the repository and work in the folder it prints. Never create the worktree with Git yourself.
+- `delivery start` cuts the branch from the latest default branch of `origin`. The folder is
+  `.worktrees/<short-name>`, or a numbered slot of the treehouse pool on a machine where pooled worktrees are
+  on (`delivery pool` says which). A slot keeps installed dependencies and build output from earlier tasks;
+  if a result looks stale, rebuild before trusting it. Running `delivery start` again for the same branch
+  prints the same folder, so use it to find a task's folder; never guess the path.
 - Branches are `type/short-description` with `feature`, `fix`, `refactor`, `docs`, `test`, `chore` or `style`.
   Commits and PR titles are `type(scope): subject`; the PR title becomes the squash commit.
 - Scratch files (PR bodies, logs, patches) go in the worktree's ignored `.artifacts/`, never the system temp
@@ -166,6 +171,9 @@ stop; a new attempt needs a new request.
   They keep anything with uncommitted or untracked files, unmerged commits, a `.artifacts/KEEP` marker or a
   separate Git repository inside it, and say why. Never delete a kept worktree by hand; report the reason
   instead. Put a `.artifacts/KEEP` file in a worktree whose ignored files must survive.
+- A pool slot is returned to its pool, not deleted: its `.artifacts/` is cleared and the next task reuses the
+  folder. Never return, prune or destroy a slot with treehouse yourself, and never switch pooled worktrees on
+  or off (`delivery pool on|off`); that choice is the maintainer's.
 - `delivery finish <worktree> --force` removes a kept worktree with its uncommitted, untracked and ignored
   files, also past the keep marker. It never discards commits: a branch whose commits are not merged stays.
   A lock, a separate Git repository inside the worktree and the worktree the command runs in are never forced.

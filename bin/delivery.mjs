@@ -6,11 +6,17 @@ const USAGE = `Usage: delivery <command>
 
   check-body --body-file <path> [--final]   Validate a pull-request body before pushing it
   check-body --pr <number> [--final]        Validate the current body of a pull request
-  cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees
+  start <type>/<short-name>                 Start, or return to, one task's checkout and print its path: a slot
+                                            from the treehouse pool when pooled worktrees are on, else
+                                            .worktrees/<short-name>, on a branch cut from origin's default
+  cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees; a pool slot
+                                            is returned to its pool instead
   finish <worktree> [--force]               Remove one task's worktree and its merged branch; the worktree is
                                             named by path, by its folder under .worktrees/, or by its branch.
                                             --force also discards its uncommitted, untracked and ignored
                                             files, never commits that are not merged
+  pool [on|off] [--json]                    Show, or set, whether this machine uses pooled worktrees; they
+                                            need treehouse installed
   protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
                                             in protection/repositories.json
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
@@ -41,6 +47,21 @@ try {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" }, path: { type: "string" } } });
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
+  } else if (command === "start") {
+    const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+    if (positionals.length !== 1) throw new Error("name exactly one branch, as type/short-description");
+    const { startWorktree } = await import("../scripts/worktree-pool.mjs");
+    const started = await startWorktree({ branch: positionals[0] });
+    // The path alone on stdout, so a script can take it; the rest is for a reader.
+    console.error(`${started.created ? "started" : "continuing"} ${started.branch} in ${started.pooled ? "a pool slot" : "a worktree"}`);
+    console.log(started.path.replaceAll("\\", "/"));
+  } else if (command === "pool") {
+    const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: "boolean" } } });
+    const { formatPool, poolState, writePoolSetting } = await import("../scripts/worktree-pool.mjs");
+    if (positionals.length > 1 || (positionals[0] && !["on", "off"].includes(positionals[0]))) throw new Error("use `delivery pool`, `delivery pool on` or `delivery pool off`");
+    if (positionals[0]) await writePoolSetting(positionals[0] === "on");
+    const state = await poolState();
+    console.log(values.json ? JSON.stringify(state) : formatPool(state));
   } else if (command === "finish") {
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { force: { type: "boolean" } } });
     if (positionals.length !== 1) throw new Error("name exactly one worktree: its path, its folder under .worktrees/, or its branch");

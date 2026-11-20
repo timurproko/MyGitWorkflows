@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { defaultPool } from "./worktree-pool.mjs";
 
 const run = promisify(execFile);
 const KEEP_MARKER = join(".artifacts", "KEEP");
@@ -18,19 +19,20 @@ const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
  * Without `apply` nothing is deleted: the report says what would happen.
  */
 export async function cleanupWorktrees({ cwd = process.cwd(), apply = false, only = null,
-  git = defaultGit, findMergedPull = defaultFindMergedPull, remove = defaultRemove } = {}) {
+  git = defaultGit, findMergedPull = defaultFindMergedPull, remove = defaultRemove, pool = defaultPool } = {}) {
   const worktrees = parseWorktrees(await git(cwd, ["worktree", "list", "--porcelain"]));
   const primary = worktrees[0];
   if (!primary) throw new Error("not inside a Git repository");
   const here = await canonical(cwd);
+  const slots = await poolSlots(pool, worktrees);
   const results = [];
   for (const worktree of worktrees.slice(1)) {
     if (only && !samePath(await canonical(worktree.path), await canonical(resolve(cwd, only)))) continue;
-    const decision = await inspectWorktree({ worktree, primary, here, git, findMergedPull });
+    const slot = await slotOf(slots, worktree);
+    const decision = await inspectWorktree({ worktree, primary, here, git, findMergedPull, slot });
     if (decision.action === "remove" && apply) {
       try {
-        await remove(worktree.path);
-        await git(primary.path, ["worktree", "prune"]);
+        await discard({ worktree, slot, primary, git, remove, pool });
         await git(primary.path, ["branch", "-D", worktree.branch]);
         decision.removed = true;
       } catch (error) {
@@ -38,9 +40,42 @@ export async function cleanupWorktrees({ cwd = process.cwd(), apply = false, onl
         decision.reason = `removal failed: ${firstLine(error)}`;
       }
     }
-    results.push({ path: worktree.path, branch: worktree.branch ?? null, ...decision });
+    results.push({ path: worktree.path, branch: worktree.branch ?? null, pooled: Boolean(slot), ...decision });
   }
   return { primary: primary.path, apply, results };
+}
+
+/**
+ * Give up one checkout. A plain worktree is deleted. A pool slot is kept for the next task: its
+ * scratch folder is cleared, because treehouse keeps ignored files, and it goes back to the pool.
+ */
+async function discard({ worktree, slot, primary, git, remove, pool, force = false }) {
+  if (slot) {
+    await remove(join(worktree.path, ".artifacts"));
+    await pool.giveBack(worktree.path, { force });
+  } else {
+    await remove(worktree.path);
+  }
+  await git(primary.path, ["worktree", "prune"]);
+}
+
+/**
+ * The pool's slots among these worktrees. Treehouse is asked only when a worktree lies outside the
+ * primary checkout's `.worktrees/`, where a slot always does: asking makes treehouse create a
+ * state folder for the repository, which a repository that never used the pool should not get.
+ */
+export async function poolSlots(pool, worktrees) {
+  const [primary, ...linked] = worktrees;
+  const plain = (await canonical(join(primary.path, ".worktrees"))) + sep;
+  const outside = [];
+  for (const worktree of linked) if (!(await canonical(worktree.path)).startsWith(plain)) outside.push(worktree);
+  return outside.length ? await pool.slots(primary.path) : [];
+}
+
+async function slotOf(slots, worktree) {
+  if (!slots.length) return null;
+  const real = await canonical(worktree.path);
+  return slots.find(slot => samePath(slot.path, real)) ?? null;
 }
 
 /**
@@ -53,21 +88,21 @@ export async function cleanupWorktrees({ cwd = process.cwd(), apply = false, onl
  * worktree the command runs in are never forced.
  */
 export async function finishWorktree({ cwd = process.cwd(), target, force = false,
-  git = defaultGit, findMergedPull = defaultFindMergedPull, remove = defaultRemove } = {}) {
+  git = defaultGit, findMergedPull = defaultFindMergedPull, remove = defaultRemove, pool = defaultPool } = {}) {
   const worktrees = parseWorktrees(await git(cwd, ["worktree", "list", "--porcelain"]));
   const primary = worktrees[0];
   if (!primary) throw new Error("not inside a Git repository");
   const worktree = await findWorktree(worktrees, cwd, target);
   if (!worktree) throw new Error(`no linked worktree matches ${target}; \`git worktree list\` shows them`);
-  const decision = await inspectWorktree({ worktree, primary, here: await canonical(cwd), git, findMergedPull });
-  const result = { path: worktree.path, branch: worktree.branch ?? null, ...decision, removed: false, branchRemoved: false };
+  const slot = await slotOf(await poolSlots(pool, worktrees), worktree);
+  const decision = await inspectWorktree({ worktree, primary, here: await canonical(cwd), git, findMergedPull, slot });
+  const result = { path: worktree.path, branch: worktree.branch ?? null, pooled: Boolean(slot), ...decision, removed: false, branchRemoved: false };
   if (decision.action === "keep" && !(force && decision.forceable)) return result;
   result.forced = decision.action === "keep";
   try {
-    // Invariant: decided before the folder goes; afterwards its head can no longer be read.
+    // Invariant: decided before the checkout goes; afterwards its head can no longer be read.
     const branchMerged = !result.forced || await isMerged({ worktree, primary, git, findMergedPull });
-    await remove(worktree.path);
-    await git(primary.path, ["worktree", "prune"]);
+    await discard({ worktree, slot, primary, git, remove, pool, force: result.forced });
     result.removed = true;
     if (worktree.branch && branchMerged) {
       await git(primary.path, ["branch", "-D", worktree.branch]);
@@ -81,13 +116,15 @@ export async function finishWorktree({ cwd = process.cwd(), target, force = fals
 
 export function formatFinish(result) {
   const name = `${result.path} (${result.branch ?? "no branch"})`;
-  if (result.failure) return `failed ${name}: ${result.failure}${result.removed ? "; the worktree is gone, the branch is not" : ""}`;
+  const gone = result.pooled ? "slot returned to the pool" : "worktree removed";
+  if (result.failure) return `failed ${name}: ${result.failure}${result.removed ? `; ${gone}, the branch is still there` : ""}`;
   if (!result.removed) {
+    const discards = result.pooled ? "returns the slot and discards its uncommitted and untracked files" : "removes the worktree with its uncommitted, untracked and ignored files";
     return [`kept ${name}: ${result.reason}. Nothing was removed.`,
-      ...(result.forceable ? ["`--force` removes the worktree with its uncommitted, untracked and ignored files; commits that are not merged stay on the branch. Only when the maintainer asks."] : [])].join("\n");
+      ...(result.forceable ? [`\`--force\` ${discards}; commits that are not merged stay on the branch. Only when the maintainer asks.`] : [])].join("\n");
   }
   const branch = result.branchRemoved ? "branch deleted" : result.branch ? `branch ${result.branch} kept, its commits are not in a merged pull request` : "no branch";
-  return `finished ${name}: ${result.forced ? `forced past "${result.reason}"` : result.reason}; worktree removed, ${branch}`;
+  return `finished ${name}: ${result.forced ? `forced past "${result.reason}"` : result.reason}; ${gone}, ${branch}`;
 }
 
 /** A worktree named by its path, by its folder under `.worktrees/`, or by its branch. */
@@ -105,17 +142,23 @@ async function findWorktree(worktrees, cwd, target) {
 // Rationale: a failed lookup or comparison counts as not merged, so a forced finish keeps the branch.
 async function isMerged({ worktree, primary, git, findMergedPull }) {
   if (!worktree.branch) return false;
-  const pull = await findMergedPull(primary.path, worktree.branch);
-  if (!pull) return false;
-  const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
-  return head === pull.head || await contains(git, primary.path, pull, head) === true;
+  try {
+    const pull = await findMergedPull(primary.path, worktree.branch);
+    if (!pull) return false;
+    const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
+    return head === pull.head || await contains(git, primary.path, pull, head) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Decide one worktree. Every refusal names the fact that blocked it; `forceable` marks the ones `finish --force` may pass. */
-export async function inspectWorktree({ worktree, primary, here, git, findMergedPull }) {
+export async function inspectWorktree({ worktree, primary, here, git, findMergedPull, slot = null }) {
   const keep = (reason, forceable = false) => ({ action: "keep", reason, forceable });
   if (worktree.locked) return keep("the worktree is locked");
   if (worktree.prunable) return keep("the worktree folder is missing; `git worktree prune` clears the record");
+  // Invariant: a slot nobody leased holds no task; it belongs to the pool and is never removed from here.
+  if (slot && slot.status !== "leased") return keep(`a pool slot that no task holds (${slot.status}); \`treehouse prune\` reclaims it`);
   const root = await canonical(worktree.path);
   if (here === root || here.startsWith(root + sep)) return keep("the command is running inside this worktree");
   if (worktree.bare) return keep("no branch is checked out");
@@ -127,7 +170,11 @@ export async function inspectWorktree({ worktree, primary, here, git, findMerged
   }
   if (await exists(join(worktree.path, KEEP_MARKER))) return keep(`marked to keep by ${KEEP_MARKER.replaceAll("\\", "/")}`, true);
 
-  const pull = await findMergedPull(primary.path, worktree.branch);
+  let pull;
+  // Rationale: no GitHub remote or no network is a fact about this worktree, not a reason to stop the whole pass.
+  try { pull = await findMergedPull(primary.path, worktree.branch); } catch (error) {
+    return keep(`could not ask for a merged pull request (${firstLine(error)})`, true);
+  }
   if (!pull) return keep("no merged pull request for this branch", true);
   const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
   if (head !== pull.head) {
@@ -157,10 +204,12 @@ export function parseWorktrees(output) {
 
 export function formatReport(report) {
   if (report.results.length === 0) return "No linked worktrees.";
-  const verb = result => result.action === "keep" ? "keep  " : result.removed ? "removed" : "would remove";
+  // A pool slot is returned for the next task, not deleted.
+  const verb = result => result.action === "keep" ? "keep  "
+    : result.pooled ? (result.removed ? "returned" : "would return") : result.removed ? "removed" : "would remove";
   const lines = report.results.map(result => `${verb(result)} ${result.path} (${result.branch ?? "no branch"}): ${result.reason}`);
   const pending = report.results.some(result => result.action === "remove" && !result.removed);
-  return [...lines, ...(pending ? ["Nothing was deleted. Run again with --apply to remove the worktrees listed as `would remove`."] : [])].join("\n");
+  return [...lines, ...(pending ? ["Nothing was deleted. Run again with --apply to remove the worktrees listed as `would remove` and return the slots listed as `would return`."] : [])].join("\n");
 }
 
 // Rationale: the remote branch is usually deleted after a merge, so the merged head is fetched by its pull-request ref.
@@ -190,7 +239,7 @@ async function findNestedRepository(root, relative = "", depth = 0) {
   return null;
 }
 
-async function defaultGit(cwd, args) {
+export async function defaultGit(cwd, args) {
   return (await run("git", args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
 }
 
@@ -210,11 +259,11 @@ async function exists(path) {
   try { await lstat(path); return true; } catch { return false; }
 }
 
-async function canonical(path) {
+export async function canonical(path) {
   try { return realpathSync.native(path); } catch { return resolve(path); }
 }
 
-function samePath(left, right) {
+export function samePath(left, right) {
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
