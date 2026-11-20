@@ -43,28 +43,97 @@ export async function cleanupWorktrees({ cwd = process.cwd(), apply = false, onl
   return { primary: primary.path, apply, results };
 }
 
-/** Decide one worktree. Every refusal names the fact that blocked it. */
+/**
+ * Finish one task: remove its worktree and, when its pull request merged, its local branch.
+ *
+ * Without `force` this is cleanup for exactly one worktree and keeps whatever cleanup keeps.
+ * `force` is the maintainer's word to discard files: uncommitted, untracked and ignored files go
+ * with the folder, also past a keep marker. It never discards commits: a branch whose commits are
+ * not in a merged pull request stays. A lock, a separate repository inside the worktree and the
+ * worktree the command runs in are never forced.
+ */
+export async function finishWorktree({ cwd = process.cwd(), target, force = false,
+  git = defaultGit, findMergedPull = defaultFindMergedPull, remove = defaultRemove } = {}) {
+  const worktrees = parseWorktrees(await git(cwd, ["worktree", "list", "--porcelain"]));
+  const primary = worktrees[0];
+  if (!primary) throw new Error("not inside a Git repository");
+  const worktree = await findWorktree(worktrees, cwd, target);
+  if (!worktree) throw new Error(`no linked worktree matches ${target}; \`git worktree list\` shows them`);
+  const decision = await inspectWorktree({ worktree, primary, here: await canonical(cwd), git, findMergedPull });
+  const result = { path: worktree.path, branch: worktree.branch ?? null, ...decision, removed: false, branchRemoved: false };
+  if (decision.action === "keep" && !(force && decision.forceable)) return result;
+  result.forced = decision.action === "keep";
+  try {
+    // Invariant: decided before the folder goes; afterwards its head can no longer be read.
+    const branchMerged = !result.forced || await isMerged({ worktree, primary, git, findMergedPull });
+    await remove(worktree.path);
+    await git(primary.path, ["worktree", "prune"]);
+    result.removed = true;
+    if (worktree.branch && branchMerged) {
+      await git(primary.path, ["branch", "-D", worktree.branch]);
+      result.branchRemoved = true;
+    }
+  } catch (error) {
+    result.failure = `removal failed: ${firstLine(error)}`;
+  }
+  return result;
+}
+
+export function formatFinish(result) {
+  const name = `${result.path} (${result.branch ?? "no branch"})`;
+  if (result.failure) return `failed ${name}: ${result.failure}${result.removed ? "; the worktree is gone, the branch is not" : ""}`;
+  if (!result.removed) {
+    return [`kept ${name}: ${result.reason}. Nothing was removed.`,
+      ...(result.forceable ? ["`--force` removes the worktree with its uncommitted, untracked and ignored files; commits that are not merged stay on the branch. Only when the maintainer asks."] : [])].join("\n");
+  }
+  const branch = result.branchRemoved ? "branch deleted" : result.branch ? `branch ${result.branch} kept, its commits are not in a merged pull request` : "no branch";
+  return `finished ${name}: ${result.forced ? `forced past "${result.reason}"` : result.reason}; worktree removed, ${branch}`;
+}
+
+/** A worktree named by its path, by its folder under `.worktrees/`, or by its branch. */
+async function findWorktree(worktrees, cwd, target) {
+  if (!target) return null;
+  const [primary, ...linked] = worktrees;
+  const wanted = [await canonical(resolve(cwd, target)), await canonical(join(primary.path, ".worktrees", target))];
+  for (const worktree of linked) {
+    const real = await canonical(worktree.path);
+    if (wanted.some(path => samePath(path, real)) || worktree.branch === target) return worktree;
+  }
+  return null;
+}
+
+// Rationale: a failed lookup or comparison counts as not merged, so a forced finish keeps the branch.
+async function isMerged({ worktree, primary, git, findMergedPull }) {
+  if (!worktree.branch) return false;
+  const pull = await findMergedPull(primary.path, worktree.branch);
+  if (!pull) return false;
+  const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
+  return head === pull.head || await contains(git, primary.path, pull, head) === true;
+}
+
+/** Decide one worktree. Every refusal names the fact that blocked it; `forceable` marks the ones `finish --force` may pass. */
 export async function inspectWorktree({ worktree, primary, here, git, findMergedPull }) {
-  const keep = reason => ({ action: "keep", reason });
-  if (worktree.bare || worktree.detached || !worktree.branch) return keep("no branch is checked out");
+  const keep = (reason, forceable = false) => ({ action: "keep", reason, forceable });
   if (worktree.locked) return keep("the worktree is locked");
   if (worktree.prunable) return keep("the worktree folder is missing; `git worktree prune` clears the record");
   const root = await canonical(worktree.path);
   if (here === root || here.startsWith(root + sep)) return keep("the command is running inside this worktree");
-  if ((await git(worktree.path, ["status", "--porcelain", "--untracked-files=all"])).trim()) {
-    return keep("uncommitted or untracked files");
-  }
-  if (await exists(join(worktree.path, KEEP_MARKER))) return keep(`marked to keep by ${KEEP_MARKER.replaceAll("\\", "/")}`);
+  if (worktree.bare) return keep("no branch is checked out");
   const nested = await findNestedRepository(worktree.path);
   if (nested) return keep(`holds a separate Git repository at ${nested.replaceAll("\\", "/")}`);
+  if (worktree.detached || !worktree.branch) return keep("no branch is checked out", true);
+  if ((await git(worktree.path, ["status", "--porcelain", "--untracked-files=all"])).trim()) {
+    return keep("uncommitted or untracked files", true);
+  }
+  if (await exists(join(worktree.path, KEEP_MARKER))) return keep(`marked to keep by ${KEEP_MARKER.replaceAll("\\", "/")}`, true);
 
   const pull = await findMergedPull(primary.path, worktree.branch);
-  if (!pull) return keep("no merged pull request for this branch");
+  if (!pull) return keep("no merged pull request for this branch", true);
   const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
   if (head !== pull.head) {
     const merged = await contains(git, primary.path, pull, head);
     if (merged === null) return keep(`could not compare with pull request #${pull.number}; run cleanup again`);
-    if (!merged) return keep(`has commits that pull request #${pull.number} did not merge`);
+    if (!merged) return keep(`has commits that pull request #${pull.number} did not merge`, true);
   }
   return { action: "remove", reason: `pull request #${pull.number} merged`, pull: pull.number };
 }

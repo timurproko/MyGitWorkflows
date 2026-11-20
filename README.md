@@ -50,6 +50,7 @@ instead; run `delivery install` again to return to the managed copy.
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them |
+| `delivery finish <worktree>` | Remove one task's worktree and its merged branch; `--force` also discards its uncommitted files, never unmerged commits |
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
 | `delivery openspec <arguments>` | Run OpenSpec at the version this repository pins |

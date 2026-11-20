@@ -159,12 +159,18 @@ stop; a new attempt needs a new request.
 - In an A1 session still attached to the merged task, run `a1 worktree complete`: it returns the session to the
   primary checkout and then runs the repository's cleanup, so never clean the attached checkout yourself. Stay
   attached until then; `a1 worktree detach` is only for switching tasks or an explicit request.
-- Otherwise leave the worktree first, then from the primary checkout run `delivery cleanup` to see what would be
-  removed and `delivery cleanup --apply` to remove it.
-- Cleanup removes a worktree and its local branch only when its PR merged and the checkout holds nothing else.
-  It keeps anything with uncommitted or untracked files, unmerged commits, a `.artifacts/KEEP` marker or a
-  separate Git repository inside it, and says why. Never delete a kept worktree by hand or with force; report
-  the reason instead. Put a `.artifacts/KEEP` file in a worktree whose ignored files must survive.
+- Otherwise leave the worktree first, then from the primary checkout run `delivery finish <worktree>` for the
+  one task that merged, naming it by path, by its folder under `.worktrees/` or by its branch. To sweep every
+  merged task, run `delivery cleanup` to see what would be removed and `delivery cleanup --apply` to remove it.
+- Both remove a worktree and its local branch only when its PR merged and the checkout holds nothing else.
+  They keep anything with uncommitted or untracked files, unmerged commits, a `.artifacts/KEEP` marker or a
+  separate Git repository inside it, and say why. Never delete a kept worktree by hand; report the reason
+  instead. Put a `.artifacts/KEEP` file in a worktree whose ignored files must survive.
+- `delivery finish <worktree> --force` removes a kept worktree with its uncommitted, untracked and ignored
+  files, also past the keep marker. It never discards commits: a branch whose commits are not merged stays.
+  A lock, a separate Git repository inside the worktree and the worktree the command runs in are never forced.
+  Use `--force` only when the maintainer explicitly asks, in the current conversation, to discard one
+  identified worktree. Like a merge request, that is one-shot and is not remembered.
 
 ## Always
 
