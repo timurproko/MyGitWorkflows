@@ -62,6 +62,8 @@ export async function installEverything({ home = homedir(), dev = false, link = 
   lines.push(...await install({ home, source: join(root, "skills", SKILL) }));
   lines.push(...await installOpenspecSkills({ home, root, ...(generate ? { generate } : {}) }));
   lines.push(await link(root));
+  const { registerClaudeGuard } = await import("./worktree-guard.mjs");
+  lines.push(await registerClaudeGuard({ home }));
   lines.push(await disableClaudeAttribution({ home }));
   if (!dev) {
     const legacy = await removeLegacyCopy({ home });

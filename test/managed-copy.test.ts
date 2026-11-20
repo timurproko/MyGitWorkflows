@@ -55,7 +55,9 @@ describe("managed copy", () => {
     expect(existsSync(legacyRoot(home))).toBe(false);
     expect(lines.at(-1)).toContain("removed the earlier copy");
     expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8")))
-      .toEqual({ theme: "dark", attribution: { other: 1, commit: "", pr: "" }, includeCoAuthoredBy: false });
+      .toEqual({ theme: "dark", attribution: { other: 1, commit: "", pr: "" }, includeCoAuthoredBy: false,
+        hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [{ type: "command", command: "delivery guard" }] }] } });
+    expect(lines).toContainEqual(expect.stringContaining("registered the worktree guard as a Claude Code hook"));
     expect(await disableClaudeAttribution({ home })).toContain("already off");
     await writeFile(join(home, ".claude", "settings.json"), "{ not json");
     expect(await disableClaudeAttribution({ home })).toContain("not valid JSON");

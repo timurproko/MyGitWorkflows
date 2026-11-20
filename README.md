@@ -39,7 +39,8 @@ git clone https://github.com/timurproko/MyWorkflows.git ~/.workflow && node ~/.w
 
 Every agent and command on the machine reads the workflow from that one managed copy, `~/.workflow`.
 `delivery install` links its skills into `~/.claude/skills` and `~/.agents/skills` and puts its `delivery` command on
-the path, and turns Claude Code commit and pull-request attribution off in `~/.claude/settings.json`. The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
+the path, turns Claude Code commit and pull-request attribution off in `~/.claude/settings.json`, and registers
+the worktree guard there as a hook (see below). The copy fast-forwards itself at most once an hour whenever `delivery` runs, and `delivery update` does it
 immediately, so nobody pulls by hand. A failed update (offline, no access) is reported in one line and never
 blocks a command.
 
@@ -53,10 +54,24 @@ instead; run `delivery install` again to return to the managed copy.
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them, and returns pool slots to their pool |
 | `delivery finish <worktree>` | Remove one task's worktree and its merged branch; `--force` also discards its uncommitted files, never unmerged commits |
 | `delivery pool` | Say whether this machine uses pooled worktrees; `delivery pool on` and `delivery pool off` set it |
+| `delivery guard` | Refuse, with exit code 2, a shell command that creates a worktree with Git; run by an agent's pre-command hook |
 
 Pooled worktrees need [treehouse](https://github.com/kunchenguid/treehouse) on the machine. Installing it turns them
 on; `~/.workflow/settings.local.json` (`"pooledWorktrees": false`, a file Git ignores) turns them off without uninstalling. A pooled
 task works in a numbered slot that keeps its installed dependencies and build output for the next task.
+
+A task's checkout comes only from `delivery start`. Two things hold agents to that:
+
+- **The report.** `delivery start`, `delivery cleanup` and `delivery bootstrap` name every worktree of the
+  repository that is neither under `.worktrees/` nor a pool slot, with the commands that replace it. Nothing is
+  moved or removed unasked. This reaches every agent, after the fact.
+- **The guard.** `delivery guard` refuses a shell command that runs `git worktree add`, before it runs. It takes
+  the command as its arguments, or as a hook's JSON on standard input (`tool_input.command`), prints the reason
+  and exits with 2; anything it does not recognise, or cannot read, it lets through. `delivery install` and
+  `delivery bootstrap` register it for Claude Code as a `PreToolUse` hook on its shell tools in
+  `~/.claude/settings.json`. Any other agent that can run a command before each shell call is wired the same
+  way: have that hook run `delivery guard`, hand it the command, and treat exit code 2 as a refusal. An agent
+  without such a hook is covered by the report only.
 | `delivery install` | Download or update the managed copy and link its skill and command |
 | `delivery update` | Fast-forward the managed copy now |
 | `delivery openspec <arguments>` | Run OpenSpec at the version this repository pins |
