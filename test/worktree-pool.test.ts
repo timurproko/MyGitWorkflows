@@ -42,19 +42,20 @@ function fakePool(root: string, { version = "v3.1.8" as string | null } = {}) {
   const log: string[] = [];
   return { slots: async () => slots.map(slot => ({ ...slot })), log,
     version: async () => version,
-    async lease(cwd: string, branch: string | null) {
-      await git(cwd, "fetch", "--quiet", "origin", "main");
+    async lease(cwd: string, { branch = null as string | null, base = null as string | null } = {}) {
+      const from = `origin/${base ?? "main"}`;
+      await git(cwd, "fetch", "--quiet", "origin", base ?? "main");
       let slot = slots.find(candidate => candidate.status === "available");
       if (slot) {
-        await git(slot.path, "checkout", "--quiet", "--detach", "origin/main");
+        await git(slot.path, "checkout", "--quiet", "--detach", from);
         if (branch) await git(slot.path, "checkout", "--quiet", "-b", branch);
       } else {
         slot = { name: String(slots.length + 1), path: join(root, "pool", String(slots.length + 1), "primary"), status: "" };
-        await git(cwd, "worktree", "add", "--quiet", ...(branch ? ["-b", branch] : ["--detach"]), slot.path, "origin/main");
+        await git(cwd, "worktree", "add", "--quiet", ...(branch ? ["-b", branch] : ["--detach"]), slot.path, from);
         slots.push(slot);
       }
       slot.status = "leased";
-      log.push(`lease ${slot.name}`);
+      log.push(`lease ${slot.name}${base ? ` --base ${base}` : ""}`);
       return slot.path;
     },
     async giveBack(path: string, { force = false } = {}) {
@@ -122,6 +123,53 @@ describe("start", () => {
     const again = await startWorktree({ cwd: primary, branch: "feature/pooled", pool, file: settings });
     expect(again).toMatchObject({ created: false, pooled: true, path: started.path });
     expect(pool.log).toEqual(["lease 1"]);
+  });
+});
+
+describe("start options", () => {
+  it("cuts from a named base branch, in a plain worktree and in a slot", async () => {
+    const { root, primary, settings } = await repository();
+    await git(primary, "checkout", "--quiet", "-b", "release");
+    await writeFile(join(primary, "release.txt"), "release");
+    await git(primary, "add", "-A");
+    await git(primary, "commit", "--quiet", "-m", "release");
+    await git(primary, "push", "--quiet", "origin", "release");
+    const released = await git(primary, "rev-parse", "HEAD");
+    await git(primary, "checkout", "--quiet", "main");
+
+    const plain = await startWorktree({ cwd: primary, branch: "fix/plain", base: "release", pool: fakePool(root, { version: null }), file: settings });
+    expect(await git(plain.path, "rev-parse", "HEAD")).toBe(released);
+    const pool = fakePool(root);
+    const pooled = await startWorktree({ cwd: primary, branch: "fix/pooled", base: "release", pool, file: settings });
+    expect(await git(pooled.path, "rev-parse", "HEAD")).toBe(released);
+    expect(pool.log).toEqual(["lease 1 --base release"]);
+  });
+
+  it("gives a checkout without a branch, and finds the plain one again by its name", async () => {
+    const { root, primary, published, settings } = await repository();
+    const off = fakePool(root, { version: null });
+    const first = await startWorktree({ cwd: primary, detach: "look", pool: off, file: settings });
+    expect(first).toMatchObject({ branch: null, created: true, pooled: false, path: join(primary, ".worktrees", "look") });
+    expect(await git(first.path, "rev-parse", "HEAD")).toBe(published);
+    expect(await git(first.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
+    expect(await startWorktree({ cwd: primary, detach: "look", pool: off, file: settings })).toMatchObject({ created: false, path: first.path });
+
+    const pool = fakePool(root);
+    const slot = await startWorktree({ cwd: primary, detach: "review", pool, file: settings });
+    expect(slot).toMatchObject({ branch: null, created: true, pooled: true });
+    expect(await git(slot.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
+    await expect(startWorktree({ cwd: primary, detach: "Bad Name", file: settings })).rejects.toThrow("lowercase letters");
+    await expect(startWorktree({ cwd: primary, branch: "fix/x", detach: "x", file: settings })).rejects.toThrow("not both");
+  });
+
+  it("cuts from the local branch in a repository that has no origin", async () => {
+    const { root, primary, settings } = await repository();
+    await git(primary, "remote", "remove", "origin");
+    const local = await git(primary, "rev-parse", "HEAD");
+    const started = await startWorktree({ cwd: primary, branch: "feature/local", pool: fakePool(root, { version: null }), file: settings });
+    expect(await git(started.path, "rev-parse", "HEAD")).toBe(local);
+    const look = await startWorktree({ cwd: primary, detach: "look", pool: fakePool(root, { version: null }), file: settings });
+    expect(await git(look.path, "rev-parse", "HEAD")).toBe(local);
   });
 });
 

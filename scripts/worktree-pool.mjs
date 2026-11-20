@@ -7,6 +7,7 @@ import { canonical, defaultGit, parseWorktrees, poolSlots, samePath } from "./wo
 
 const run = promisify(execFile);
 const BRANCH = /^(feature|fix|refactor|docs|test|chore|style)\/([a-z0-9][a-z0-9._-]*)$/;
+const NAME = /^[a-z0-9][a-z0-9._-]*$/;
 
 /**
  * Pooled worktrees: on a machine with treehouse installed, a task's checkout is a slot leased from
@@ -56,37 +57,55 @@ export function formatPool(state) {
  * Start, or return to, the checkout of one task and say where it is.
  *
  * A branch that already has a worktree is continued there. Otherwise the checkout is a leased pool
- * slot when pooling is active, else `.worktrees/<name>` in the primary checkout. Either way the
- * branch is cut from the latest default branch of `origin`, never from a stale local one.
+ * slot when pooling is active, else `.worktrees/<name>` in the primary checkout. Either way it is
+ * cut from the latest state of `origin`, never from a stale local branch: the default branch, or
+ * `base` when one is named. A repository without `origin` is cut from its own branch instead.
+ *
+ * `detach` names a checkout without a branch, for reading only (an investigation, a review).
  */
-export async function startWorktree({ cwd = process.cwd(), branch, git = defaultGit, pool = defaultPool, file = SETTINGS_FILE } = {}) {
-  const name = BRANCH.exec(branch ?? "")?.[2];
-  if (!name) throw new Error("name the branch as type/short-description, with type feature, fix, refactor, docs, test, chore or style");
+export async function startWorktree({ cwd = process.cwd(), branch = null, detach = null, base = null,
+  git = defaultGit, pool = defaultPool, file = SETTINGS_FILE } = {}) {
+  if (branch && detach) throw new Error("name a branch or a checkout without one, not both");
+  const name = detach ? NAME.exec(detach)?.[0] : BRANCH.exec(branch ?? "")?.[2];
+  if (!name) throw new Error(detach ? "name the checkout with lowercase letters, digits, dots and dashes"
+    : "name the branch as type/short-description, with type feature, fix, refactor, docs, test, chore or style");
   const worktrees = parseWorktrees(await git(cwd, ["worktree", "list", "--porcelain"]));
   const primary = worktrees[0];
   if (!primary) throw new Error("not inside a Git repository");
-  const existing = worktrees.slice(1).find(worktree => worktree.branch === branch);
+  const plainPath = join(primary.path, ".worktrees", name);
+  const plainReal = await canonical(plainPath);
+  const linked = [];
+  for (const worktree of worktrees.slice(1)) linked.push({ ...worktree, real: await canonical(worktree.path) });
+  // Invariant: a branch is found wherever its checkout is; a checkout without one only by its plain folder.
+  const existing = linked.find(worktree => (branch ? worktree.branch === branch : samePath(worktree.real, plainReal)));
   if (existing) {
-    const real = await canonical(existing.path);
-    const pooled = (await poolSlots(pool, [primary, existing])).some(slot => samePath(slot.path, real));
+    const pooled = (await poolSlots(pool, [primary, existing])).some(slot => samePath(slot.path, existing.real));
     return { path: existing.path, branch, created: false, pooled };
   }
 
-  const hasBranch = await succeeds(git, primary.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const hasBranch = Boolean(branch) && await succeeds(git, primary.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   if ((await poolState({ file, pool })).active) {
-    // Rationale: treehouse fetches origin itself and cuts the slot from its default branch.
-    const path = await pool.lease(primary.path, hasBranch ? null : branch);
+    // Rationale: treehouse fetches origin itself and cuts the slot from the default branch, or from `base`.
+    const path = await pool.lease(primary.path, { branch: hasBranch ? null : branch, base });
     if (hasBranch) await git(path, ["checkout", "--quiet", branch]);
     return { path, branch, created: true, pooled: true };
   }
-  const path = join(primary.path, ".worktrees", name);
-  if (hasBranch) await git(primary.path, ["worktree", "add", "--quiet", path, branch]);
+  if (hasBranch) await git(primary.path, ["worktree", "add", "--quiet", plainPath, branch]);
   else {
-    const base = await defaultBranch(git, primary.path);
-    await git(primary.path, ["fetch", "--quiet", "origin", base]);
-    await git(primary.path, ["worktree", "add", "--quiet", "-b", branch, path, `origin/${base}`]);
+    const from = await startingPoint(git, primary.path, base);
+    await git(primary.path, ["worktree", "add", "--quiet", ...(branch ? ["--no-track", "-b", branch] : ["--detach"]), plainPath, from]);
   }
-  return { path, branch, created: true, pooled: false };
+  return { path: plainPath, branch, created: true, pooled: false };
+}
+
+/** The commit a new checkout starts from: freshly fetched from `origin`, or local when there is no `origin`. */
+async function startingPoint(git, primary, base) {
+  if (!await succeeds(git, primary, ["remote", "get-url", "origin"])) {
+    return base ?? ((await git(primary, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() || "HEAD");
+  }
+  const name = base ?? await defaultBranch(git, primary);
+  await git(primary, ["fetch", "--quiet", "origin", name]);
+  return `origin/${name}`;
 }
 
 async function defaultBranch(git, primary) {
@@ -115,8 +134,8 @@ export const defaultPool = {
       return await Promise.all((Array.isArray(listed) ? listed : []).map(async slot => ({ ...slot, path: await canonical(slot.path) })));
     } catch { return []; }
   },
-  async lease(cwd, branch) {
-    const { stdout } = await treehouse(cwd, ["get", "--lease", "--json", ...(branch ? ["-b", branch] : [])]);
+  async lease(cwd, { branch = null, base = null } = {}) {
+    const { stdout } = await treehouse(cwd, ["get", "--lease", "--json", ...(branch ? ["-b", branch] : []), ...(base ? ["--base", base] : [])]);
     const path = JSON.parse(stdout).path;
     if (!path) throw new Error("treehouse gave no slot");
     return path;
