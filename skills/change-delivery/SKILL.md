@@ -41,7 +41,9 @@ branch. Implementation approval is not merge permission.
 
 - Keep the primary checkout on the default branch. Do the work in its own worktree and branch:
   in an A1 session use `a1 worktree enter <branch>`; otherwise run `delivery start <type>/<short-name>` from
-  the repository and work in the folder it prints. Never create the worktree with Git yourself.
+  the repository and work in the folder it prints. Never create the worktree with Git yourself: `delivery`
+  names a worktree made any other way until it is replaced, and where the agent has a pre-command hook
+  `delivery guard` refuses the Git command outright.
 - `delivery start` cuts the branch from the latest default branch of `origin`. The folder is
   `.worktrees/<short-name>`, or a numbered slot of the treehouse pool on a machine where pooled worktrees are
   on (`delivery pool` says which). A slot keeps installed dependencies and build output from earlier tasks;
