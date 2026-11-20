@@ -11,7 +11,8 @@ const USAGE = `Usage: delivery <command>
                                             from the treehouse pool when pooled worktrees are on, else
                                             .worktrees/<short-name>, on a branch cut from origin's default
                                             branch, or from --base
-  start --detach <name> [--base <branch>]   The same for a checkout without a branch, for reading only
+  start --detach <name> [--base <branch>]   The same for a checkout without a branch, for reading only.
+                                            --json prints path, branch, created and pooled as one JSON line
   cleanup [--apply] [--path <worktree>]     Report, or with --apply remove, merged clean worktrees; a pool slot
                                             is returned to its pool instead
   finish <worktree> [--force]               Remove one task's worktree and its merged branch; the worktree is
@@ -51,13 +52,15 @@ try {
     const { cleanupWorktrees, formatReport } = await import("../scripts/worktree-cleanup.mjs");
     console.log(formatReport(await cleanupWorktrees({ apply: Boolean(values.apply), only: values.path ?? null })));
   } else if (command === "start") {
-    const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { base: { type: "string" }, detach: { type: "string" } } });
+    const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { base: { type: "string" }, detach: { type: "string" }, json: { type: "boolean" } } });
     if (positionals.length !== (values.detach ? 0 : 1)) throw new Error("name exactly one branch as type/short-description, or one checkout with --detach");
     const { startWorktree } = await import("../scripts/worktree-pool.mjs");
     const started = await startWorktree({ branch: positionals[0] ?? null, detach: values.detach ?? null, base: values.base ?? null });
     // The path alone on stdout, so a script can take it; the rest is for a reader.
     console.error(`${started.created ? "started" : "continuing"} ${started.branch ?? `${values.detach} (no branch)`} in ${started.pooled ? "a pool slot" : "a worktree"}`);
-    console.log(started.path.replaceAll("\\", "/"));
+    const path = started.path.replaceAll("\\", "/");
+    // --json is for a tool that hands its task checkouts to this command and must know whether the checkout is new.
+    console.log(values.json ? JSON.stringify({ path, branch: started.branch, created: started.created, pooled: started.pooled }) : path);
   } else if (command === "pool") {
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: "boolean" } } });
     const { formatPool, poolState, writePoolSetting } = await import("../scripts/worktree-pool.mjs");
