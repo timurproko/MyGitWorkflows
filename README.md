@@ -126,7 +126,7 @@ advise without blocking a merge.
 
 ## Status
 
-In use by `timurproko/a1`, `timurproko/xrbuild`, its private workspace repository, and this repository itself
+In use by `timurproko/a1`, `timurproko/crew`, `timurproko/xrbuild`, its private workspace repository, and this repository itself
 (`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line), so a change to the shared
 automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the

@@ -13,6 +13,12 @@
       "workflows": [".github/workflows/delivery.yml", ".github/workflows/release-reopening-auto-merge.yml"],
       "events": ["pull_request_target", "workflow_run", "workflow_dispatch"] }
   ],
+  "timurproko/crew": [
+    { "kind": "default-branch", "checks": ["CI required"], "mergeMethods": ["squash"], "linearHistory": true },
+    { "kind": "workflow-events",
+      "workflows": [".github/workflows/delivery.yml"],
+      "events": ["pull_request_target", "workflow_dispatch"] }
+  ],
   "timurproko/xrbuild": [
     { "kind": "default-branch", "checks": ["CI required"], "mergeMethods": ["squash"], "linearHistory": true },
     { "kind": "workflow-events",
