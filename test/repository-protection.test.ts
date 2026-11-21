@@ -124,6 +124,32 @@ describe("repository protection", () => {
     expect(present.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["PUT repos/o/r/actions/policies/3"]);
   });
 
+  it("adopts herdr-app with Crew's checks, squash-only linear history and delivery events", async () => {
+    const shipped = await loadDeclarations();
+    const herdr = shipped["timurproko/herdr-app"];
+    expect(herdr).toEqual(shipped["timurproko/crew"]);
+    expect(herdr).toEqual([
+      { kind: "default-branch", checks: ["CI required"], mergeMethods: ["squash"], linearHistory: true },
+      { kind: "workflow-events", workflows: [".github/workflows/delivery.yml"], events: ["pull_request_target", "workflow_dispatch"] },
+    ]);
+
+    const branch = buildRuleset(herdr[0], "main");
+    expect(branch.conditions.ref_name).toEqual({ include: ["~DEFAULT_BRANCH"], exclude: [] });
+    expect(branch.rules.map(rule => rule.type)).toEqual([
+      "deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks",
+    ]);
+    expect(branch.rules.find(rule => rule.type === "pull_request")!.parameters.allowed_merge_methods).toEqual(["squash"]);
+    expect(branch.rules.find(rule => rule.type === "required_status_checks")!.parameters).toEqual({
+      strict_required_status_checks_policy: true, do_not_enforce_on_create: false,
+      required_status_checks: [{ context: "CI required" }, { context: DELIVERY_CHECK }],
+    });
+    expect(buildEventPolicy(herdr[1])).toEqual({
+      name: "allow-delivery-events", enforcement: "active",
+      conditions: { workflow_path: { include: [".github/workflows/delivery.yml"], exclude: [] } },
+      rules: [{ type: "restrict_action_events", parameters: { allowed_events: ["pull_request_target", "workflow_dispatch"] } }],
+    });
+  });
+
   it("ships a declaration file whose every entry builds", async () => {
     const shipped = await loadDeclarations();
     for (const [repository, list] of Object.entries(shipped)) {
