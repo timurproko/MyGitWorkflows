@@ -24,12 +24,25 @@ const stray = { id: 11, name: "experiment", target: "branch", enforcement: "acti
 const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
 const standard = (list = declarations, defaultBranch = "develop") => list.filter(item => item.kind !== "workflow-events").map((item, index) => ({ ...buildRuleset(item, defaultBranch), id: index + 1 }));
 
-function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEventPolicy(events), id: 3 }] as any[], file = undefined as any, fileError = undefined as any, repository = "o/r", defaultBranch = "develop" } = {}) {
+function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEventPolicy(events), id: 3 }] as any[], file = undefined as any, fileError = undefined as any, repository = "o/r", defaultBranch = "develop", reflectWrites = false } = {}) {
   const calls: Array<[string, string, any?]> = [];
   const root = `repos/${repository}`;
   const api = async (method: string, path: string, body?: unknown) => {
     calls.push([method, path, body]);
-    if (method !== "GET") return {};
+    if (method !== "GET") {
+      if (reflectWrites && path.startsWith(`${root}/rulesets`)) {
+        const id = method === "POST" ? Math.max(0, ...rulesets.map(item => item.id)) + 1 : Number(path.split("/").at(-1));
+        const saved = { ...structuredClone(body as object), id };
+        if (method === "POST") rulesets.push(saved);
+        else {
+          const index = rulesets.findIndex(item => item.id === id);
+          if (index === -1) throw httpError(404);
+          rulesets[index] = saved;
+        }
+        return saved;
+      }
+      return {};
+    }
     if (path === root) return { default_branch: defaultBranch };
     if (path === `${root}/branches/${encodeURIComponent(defaultBranch)}`) return { commit: { sha: "default-sha" } };
     if (path === `${root}/contents/${PROTECTION_FILE}?ref=default-sha`) {
@@ -270,6 +283,27 @@ describe("protection preflight", () => {
     expect(report.blocked).toBe(true);
     expect(report.rulesets[1].changes).toContain("refs refs/heads/other -> refs/heads/develop");
     expect(live.writes()).toEqual([]);
+  });
+
+  it.each([false, true])("reserves default-branch refs before names after master becomes develop (branch first: %s)", async branchFirst => {
+    const defaultDeclaration = { kind: "default-branch", checks: ["CI required"], mergeMethods: ["squash"], linearHistory: true };
+    const masterDeclaration = { kind: "branch", branch: "master" };
+    const declared = [...(branchFirst ? [masterDeclaration, defaultDeclaration] : [defaultDeclaration, masterDeclaration]), events];
+    // The name still refers to master, but ~DEFAULT_BRANCH now resolves to develop.
+    const rulesets = [{ ...buildRuleset(defaultDeclaration, "master"), id: 7 }];
+    const live = fake(rulesets, { reflectWrites: true });
+    const result = await protectRepository({ repository: "o/r", declarations: declared, api: live.api, apply: true, allowRuleChanges: true });
+    expect(result.applied).toBe(true);
+    expect(live.writes().filter(([method]) => method === "PUT").map(([, path]) => path)).toEqual(["repos/o/r/rulesets/7"]);
+    expect(live.writes().filter(([method]) => method === "POST").map(([, path]) => path)).toEqual(["repos/o/r/rulesets"]);
+    expect(rulesets).toHaveLength(2);
+    expect(rulesets.find(item => item.id === 7)).toEqual({ ...buildRuleset(defaultDeclaration, "develop"), id: 7 });
+    expect(rulesets.find(item => item.id !== 7)).toEqual({ ...buildRuleset(masterDeclaration, "develop"), id: 8 });
+    const writeCount = live.writes().length;
+    const report = await protectRepository({ repository: "o/r", declarations: declared, api: live.api });
+    expect(report.blocked).toBe(false);
+    expect(report.rulesets.every(item => item.changes.length === 0)).toBe(true);
+    expect(live.writes()).toHaveLength(writeCount);
   });
 
   it("reads later pages before deciding existing protection is missing", async () => {

@@ -143,10 +143,30 @@ export function describePolicyChanges(existing, desired) {
 const refs = (ruleset, defaultBranch) => (ruleset?.conditions?.ref_name?.include ?? [])
   .map(ref => ref === DEFAULT_BRANCH ? `refs/heads/${defaultBranch}` : ref).sort().join(",");
 
-/** The live ruleset that governs the same refs as `desired`, whatever it is called. */
+const sameRefs = (existing, desired, defaultBranch) => existing.target === desired.target && refs(existing, defaultBranch) === refs(desired, defaultBranch);
+const sameName = (existing, desired) => existing.target === desired.target && existing.name === desired.name;
+
+/** Prefer the ruleset governing the same refs, falling back to its desired name. */
 export function findLiveRuleset(live, desired, defaultBranch) {
-  return live.find(ruleset => ruleset.target === desired.target && refs(ruleset, defaultBranch) === refs(desired, defaultBranch))
-    ?? live.find(ruleset => ruleset.target === desired.target && ruleset.name === desired.name) ?? null;
+  return live.find(ruleset => sameRefs(ruleset, desired, defaultBranch))
+    ?? live.find(ruleset => sameName(ruleset, desired)) ?? null;
+}
+
+/** Reserve all exact-ref matches before any name fallback; one live ID has exactly one owner. */
+function assignLiveRulesets(live, desiredRulesets, defaultBranch) {
+  const remaining = new Map(live.map(ruleset => [ruleset.id, ruleset]));
+  const assigned = new Map();
+  for (const matches of [sameRefs, sameName]) {
+    for (const desired of desiredRulesets) {
+      if (assigned.has(desired)) continue;
+      const existing = [...remaining.values()].find(ruleset => matches(ruleset, desired, defaultBranch));
+      if (existing) {
+        assigned.set(desired, existing);
+        remaining.delete(existing.id);
+      }
+    }
+  }
+  return desiredRulesets.map(desired => ({ desired, existing: assigned.get(desired) ?? null }));
 }
 
 const contexts = parameters => (parameters?.required_status_checks ?? []).map(check => check.context);
@@ -224,9 +244,8 @@ export async function protectRepository({ repository, apply = false, allowRuleCh
   const existingPolicy = listed ? await api("GET", `repos/${repository}/actions/policies/${listed.id}`) : null;
   operations.push({ name: `Actions policy ${desiredPolicy.name}`, existing: existingPolicy, desired: desiredPolicy,
     path: `repos/${repository}/actions/policies`, changes: describePolicyChanges(existingPolicy, desiredPolicy) });
-  for (const declaration of declared.filter(item => item.kind !== "workflow-events")) {
-    const desired = buildRuleset(declaration, defaultBranch);
-    const existing = findLiveRuleset(live, desired, defaultBranch);
+  const desiredRulesets = declared.filter(item => item.kind !== "workflow-events").map(declaration => buildRuleset(declaration, defaultBranch));
+  for (const { desired, existing } of assignLiveRulesets(live, desiredRulesets, defaultBranch)) {
     if (existing) managed.add(existing.id);
     operations.push({ name: desired.name, existing, desired: keepCheckSources(desired, existing),
       path: `repos/${repository}/rulesets`, changes: describeChanges(existing, desired, defaultBranch) });
