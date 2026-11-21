@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -7,11 +6,68 @@ export const DELIVERY_CHECK = "delivery / Delivery check";
 // GitHub's built-in repository admin role; "pull_request" lets an admin merge any pull request but never push directly.
 const ADMIN_BYPASS = Object.freeze({ actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request" });
 const DEFAULT_BRANCH = "~DEFAULT_BRANCH";
-const DECLARATIONS = new URL("../protection/repositories.json", import.meta.url);
+export const PROTECTION_FILE = ".github/protection.json";
+export const DEFAULT_DECLARATIONS = [
+  { kind: "default-branch", checks: ["CI required"], mergeMethods: ["squash"], linearHistory: true },
+  { kind: "workflow-events", workflows: [".github/workflows/delivery.yml"], events: ["pull_request_target", "workflow_dispatch"] },
+];
 
-/** The reviewed rulesets of every repository, keyed by `owner/name`. */
-export async function loadDeclarations(url = DECLARATIONS) {
-  return JSON.parse(await readFile(url, "utf8"));
+const fields = {
+  "default-branch": ["checks", "mergeMethods", "linearHistory", "delivery"],
+  branch: ["branch"],
+  "release-tags": ["pattern", "bypassApps"],
+  "workflow-events": ["workflows", "events"],
+};
+const text = value => typeof value === "string" && value.trim().length > 0;
+const strings = value => Array.isArray(value) && value.every(text) && new Set(value).size === value.length;
+const missing = error => error.status === 404;
+
+/** A file replaces the defaults, so omissions keep the original declaration/builder semantics. */
+export function validateDeclarations(declarations, defaultBranch) {
+  const invalid = reason => { throw new Error(`invalid ${PROTECTION_FILE}: ${reason}`); };
+  if (!Array.isArray(declarations)) invalid("expected an array of declarations");
+  const seen = new Set();
+  for (const item of declarations) {
+    if (!item || typeof item !== "object" || !Object.hasOwn(fields, item.kind)) invalid("unknown declaration kind");
+    if (Object.keys(item).some(key => key !== "kind" && !fields[item.kind].includes(key))) invalid(`unknown field in ${item.kind}`);
+    const key = item.kind === "branch" ? `branch:${item.branch}` : item.kind;
+    if (seen.has(key)) invalid(`duplicate ${key}`);
+    seen.add(key);
+    if (item.kind === "default-branch") {
+      if (item.checks !== undefined && !strings(item.checks)) invalid("checks must be unique nonempty strings");
+      if (item.mergeMethods !== undefined && (!strings(item.mergeMethods) || !item.mergeMethods.length || item.mergeMethods.some(method => !["merge", "squash", "rebase"].includes(method)))) invalid("invalid mergeMethods");
+      for (const field of ["linearHistory", "delivery"]) if (item[field] !== undefined && typeof item[field] !== "boolean") invalid(`${field} must be boolean`);
+    } else if (item.kind === "branch") {
+      if (!text(item.branch) || item.branch === defaultBranch || item.branch.startsWith("refs/") || /[\s~^:?*\[\\]/.test(item.branch) || item.branch.includes("..")) invalid("branch must name a non-default branch");
+    } else if (item.kind === "release-tags") {
+      if (item.pattern !== undefined && !text(item.pattern)) invalid("pattern must be a nonempty string");
+      if (item.bypassApps !== undefined && (!Array.isArray(item.bypassApps) || item.bypassApps.some(id => !Number.isSafeInteger(id) || id <= 0))) invalid("bypassApps must contain positive App IDs");
+    } else {
+      if (!strings(item.workflows) || !item.workflows.length || item.workflows.some(path => !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))) invalid("workflows must name workflow YAML files");
+      if (!strings(item.events) || !item.events.length || item.events.some(event => !/^[a-z_]+$/.test(event))) invalid("events must name workflow events");
+    }
+  }
+  for (const kind of ["default-branch", "workflow-events"]) if (!seen.has(kind)) invalid(`missing ${kind}`);
+  return declarations;
+}
+
+/** Only a missing file selects defaults; remote errors and invalid files fail closed. */
+export async function loadProtection({ repository, defaultBranch, api = defaultApi }) {
+  const branch = await api("GET", `repos/${repository}/branches/${encodeURIComponent(defaultBranch)}`);
+  const commit = branch?.commit?.sha;
+  if (!text(commit)) throw new Error(`could not resolve the default branch of ${repository}`);
+  let file;
+  try {
+    file = await api("GET", `repos/${repository}/contents/${PROTECTION_FILE}?ref=${encodeURIComponent(commit)}`);
+  } catch (error) {
+    if (!missing(error)) throw error;
+    return { declarations: structuredClone(DEFAULT_DECLARATIONS), source: "built-in defaults", commit };
+  }
+  if (file?.type !== "file" || file.encoding !== "base64" || typeof file.content !== "string") throw new Error(`could not read ${PROTECTION_FILE}`);
+  let declarations;
+  try { declarations = JSON.parse(Buffer.from(file.content, "base64").toString("utf8")); }
+  catch { throw new Error(`invalid JSON in ${PROTECTION_FILE}`); }
+  return { declarations: validateDeclarations(declarations, defaultBranch), source: PROTECTION_FILE, commit };
 }
 
 /**
@@ -126,9 +182,12 @@ function keepCheckSources(desired, existing) {
  * A live ruleset that is not declared is reported and never changed or deleted.
  */
 export async function protectRepository({ repository, apply = false, api = defaultApi, declarations }) {
-  const declared = (declarations ?? await loadDeclarations())[repository];
-  if (!declared) throw new Error(`${repository} is not declared in protection/repositories.json`);
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("repository must be owner/name");
   const defaultBranch = (await api("GET", `repos/${repository}`)).default_branch;
+  const configuration = declarations
+    ? { declarations: validateDeclarations(declarations, defaultBranch), source: "provided declarations", commit: null }
+    : await loadProtection({ repository, defaultBranch, api });
+  const declared = configuration.declarations;
   const live = [];
   for (const entry of await api("GET", `repos/${repository}/rulesets`)) live.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
   const managed = new Set();
@@ -175,13 +234,14 @@ export async function protectRepository({ repository, apply = false, api = defau
       notes.push(`removed the classic branch protection rule on ${branch}; ${desired.name} protects it`);
     } else notes.push(`kept the classic branch protection rule on ${branch}: ${desired.name} is not confirmed active`);
   }
-  return { repository, rulesets, applied: apply, notes };
+  return { repository, rulesets, applied: apply, notes, configuration };
 }
 
 export function formatProtection(result) {
   const pending = result.rulesets.some(ruleset => ruleset.changes.length > 0);
   return [
     `${result.repository}`,
+    `  configuration: ${result.configuration.source}${result.configuration.commit ? ` at ${result.configuration.commit}` : ""}`,
     ...result.rulesets.flatMap(ruleset => ruleset.changes.length === 0
       ? [`  ${ruleset.name}: matches`]
       : [`  ${ruleset.name}: ${result.applied ? "updated" : "would change"}`, ...ruleset.changes.map(change => `    - ${change}`)]),
@@ -195,6 +255,11 @@ async function defaultApi(method, path, body) {
   const version = path.includes("/actions/policies") ? ["-H", "X-GitHub-Api-Version: 2026-03-10"] : [];
   const child = run("gh", ["api", "-X", method, ...version, path, ...(body ? ["--input", "-"] : [])], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
   if (body) child.child.stdin.end(JSON.stringify(body));
-  const { stdout } = await child;
-  return stdout.trim() ? JSON.parse(stdout) : null;
+  try {
+    const { stdout } = await child;
+    return stdout.trim() ? JSON.parse(stdout) : null;
+  } catch (error) {
+    error.status = Number(error.stderr?.match(/\(HTTP (\d{3})\)/)?.[1]) || undefined;
+    throw error;
+  }
 }
