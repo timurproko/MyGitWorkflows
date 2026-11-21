@@ -19,6 +19,12 @@
       "workflows": [".github/workflows/delivery.yml"],
       "events": ["pull_request_target", "workflow_dispatch"] }
   ],
+  "timurproko/herdr-app": [
+    { "kind": "default-branch", "checks": ["CI required"], "mergeMethods": ["squash"], "linearHistory": true },
+    { "kind": "workflow-events",
+      "workflows": [".github/workflows/delivery.yml"],
+      "events": ["pull_request_target", "workflow_dispatch"] }
+  ],
   "timurproko/xrbuild": [
     { "kind": "default-branch", "checks": ["CI required"], "mergeMethods": ["squash"], "linearHistory": true },
     { "kind": "workflow-events",
