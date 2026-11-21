@@ -21,9 +21,9 @@ Declare the newly seeded public repository `timurproko/herdr-app` in the shared 
 
 ## Boundaries and prerequisites
 
-- This is a plan only; implementation awaits maintainer approval.
+- The maintainer approved this plan and implementation was completed in the same pull request.
 - Do not apply live protection. The maintainer applies it after this pull request is merged.
-- The maintainer still needs to add `DELIVERY_BOT_PRIVATE_KEY` to the target repository; the App installation and `DELIVERY_BOT_APP_ID` were already supplied.
+- The maintainer has added `DELIVERY_BOT_PRIVATE_KEY` to the target repository; the App installation and `DELIVERY_BOT_APP_ID` were already supplied.
 - Do not import application source or read the personal Herdr configuration.
 - No OpenSpec folder exists in MyWorkflows, so this plan has no linked OpenSpec change.
 
@@ -33,4 +33,4 @@ The explicitly approved one-time direct push seeded `timurproko/herdr-app` main 
 
 The seed includes the unchanged delivery caller and bootstrap templates, generated shared instructions, initialized OpenSpec structure, MIT license, Node scaffold, a placeholder scaffold test, and Crew-style cross-platform CI with a fail-closed `CI required` gate. All six local tests passed. GitHub CI ran on main and failed: Windows Node 20 treated `tests/*.test.mjs` as a literal filename, so the Windows suite and `CI required` failed; Ubuntu, readiness and OpenSpec passed. GitHub CI run: https://github.com/timurproko/herdr-app/actions/runs/44942068687.
 
-The seed needs a separately authorized repair using the explicit test filename (`node --test tests/scaffold.test.mjs scripts/ci-required.test.mjs`). No second seed commit or history rewrite has been made, and this MyWorkflows plan does not authorize a change in that repository.
+The maintainer separately authorized one additional direct commit for the explicit test filenames. Commit `d499702a289dbff145c68bef3dae4f9a9bae02df` changes only the test script to `node --test tests/scaffold.test.mjs scripts/ci-required.test.mjs`, using the same noreply author and committer identity. [CI run 44942352369](https://github.com/timurproko/herdr-app/actions/runs/44942352369) passed all five jobs: readiness, OpenSpec, Windows tests, Ubuntu tests and `CI required`. No history was rewritten.
