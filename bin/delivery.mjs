@@ -24,8 +24,9 @@ const USAGE = `Usage: delivery <command>
                                             as arguments or as the hook's JSON on standard input
   pool [on|off] [--json]                    Show, or set, whether this machine uses pooled worktrees; they
                                             need treehouse installed
-  protect [--repo <owner/name>] [--apply]   Report, or with --apply set, the rulesets declared for the repository
-                                            in protection/repositories.json
+  protect [--repo <owner/name>] [--apply]   Compare defaults or the repository's .github/protection.json;
+                                            --apply installs missing protection. Changing existing rules
+                                            also requires --allow-rule-changes
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
                                             --apply writes AGENTS.md and CLAUDE.md
   openspec <arguments>                      Run OpenSpec at the version the shared workflow pins, for example
@@ -93,14 +94,16 @@ try {
     console.log(formatFinish(result));
     if (!result.removed || result.failure) process.exitCode = 1;
   } else if (command === "protect") {
-    const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" } } });
+    const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" }, "allow-rule-changes": { type: "boolean" } } });
     const { formatProtection, protectRepository } = await import("../scripts/repository-protection.mjs");
     let repository = values.repo;
     if (!repository) {
       const { execFileSync } = await import("node:child_process");
       repository = execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], { encoding: "utf8" }).trim();
     }
-    console.log(formatProtection(await protectRepository({ repository, apply: Boolean(values.apply) })));
+    const result = await protectRepository({ repository, apply: Boolean(values.apply), allowRuleChanges: Boolean(values["allow-rule-changes"]) });
+    console.log(formatProtection(result));
+    if (result.blocked) process.exitCode = 1;
   } else if (command === "instructions") {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" } } });
     const { inspectCheckout, LEFT_FOR_REVIEW } = await import("../scripts/repository-instructions.mjs");

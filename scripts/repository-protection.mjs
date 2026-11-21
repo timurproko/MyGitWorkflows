@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -7,11 +6,68 @@ export const DELIVERY_CHECK = "delivery / Delivery check";
 // GitHub's built-in repository admin role; "pull_request" lets an admin merge any pull request but never push directly.
 const ADMIN_BYPASS = Object.freeze({ actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request" });
 const DEFAULT_BRANCH = "~DEFAULT_BRANCH";
-const DECLARATIONS = new URL("../protection/repositories.json", import.meta.url);
+export const PROTECTION_FILE = ".github/protection.json";
+export const DEFAULT_DECLARATIONS = [
+  { kind: "default-branch", checks: ["CI required"], mergeMethods: ["squash"], linearHistory: true },
+  { kind: "workflow-events", workflows: [".github/workflows/delivery.yml"], events: ["pull_request_target", "workflow_dispatch"] },
+];
 
-/** The reviewed rulesets of every repository, keyed by `owner/name`. */
-export async function loadDeclarations(url = DECLARATIONS) {
-  return JSON.parse(await readFile(url, "utf8"));
+const fields = {
+  "default-branch": ["checks", "mergeMethods", "linearHistory", "delivery"],
+  branch: ["branch"],
+  "release-tags": ["pattern", "bypassApps"],
+  "workflow-events": ["workflows", "events"],
+};
+const text = value => typeof value === "string" && value.trim().length > 0;
+const strings = value => Array.isArray(value) && value.every(text) && new Set(value).size === value.length;
+const missing = error => error.status === 404;
+
+/** A file replaces the defaults, so omissions keep the original declaration/builder semantics. */
+export function validateDeclarations(declarations, defaultBranch) {
+  const invalid = reason => { throw new Error(`invalid ${PROTECTION_FILE}: ${reason}`); };
+  if (!Array.isArray(declarations)) invalid("expected an array of declarations");
+  const seen = new Set();
+  for (const item of declarations) {
+    if (!item || typeof item !== "object" || !Object.hasOwn(fields, item.kind)) invalid("unknown declaration kind");
+    if (Object.keys(item).some(key => key !== "kind" && !fields[item.kind].includes(key))) invalid(`unknown field in ${item.kind}`);
+    const key = item.kind === "branch" ? `branch:${item.branch}` : item.kind;
+    if (seen.has(key)) invalid(`duplicate ${key}`);
+    seen.add(key);
+    if (item.kind === "default-branch") {
+      if (item.checks !== undefined && !strings(item.checks)) invalid("checks must be unique nonempty strings");
+      if (item.mergeMethods !== undefined && (!strings(item.mergeMethods) || !item.mergeMethods.length || item.mergeMethods.some(method => !["merge", "squash", "rebase"].includes(method)))) invalid("invalid mergeMethods");
+      for (const field of ["linearHistory", "delivery"]) if (item[field] !== undefined && typeof item[field] !== "boolean") invalid(`${field} must be boolean`);
+    } else if (item.kind === "branch") {
+      if (!text(item.branch) || item.branch === defaultBranch || item.branch.startsWith("refs/") || /[\s~^:?*\[\\]/.test(item.branch) || item.branch.includes("..")) invalid("branch must name a non-default branch");
+    } else if (item.kind === "release-tags") {
+      if (item.pattern !== undefined && !text(item.pattern)) invalid("pattern must be a nonempty string");
+      if (item.bypassApps !== undefined && (!Array.isArray(item.bypassApps) || item.bypassApps.some(id => !Number.isSafeInteger(id) || id <= 0))) invalid("bypassApps must contain positive App IDs");
+    } else {
+      if (!strings(item.workflows) || !item.workflows.length || item.workflows.some(path => !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))) invalid("workflows must name workflow YAML files");
+      if (!strings(item.events) || !item.events.length || item.events.some(event => !/^[a-z_]+$/.test(event))) invalid("events must name workflow events");
+    }
+  }
+  for (const kind of ["default-branch", "workflow-events"]) if (!seen.has(kind)) invalid(`missing ${kind}`);
+  return declarations;
+}
+
+/** Only a missing file selects defaults; remote errors and invalid files fail closed. */
+export async function loadProtection({ repository, defaultBranch, api = defaultApi }) {
+  const branch = await api("GET", `repos/${repository}/branches/${encodeURIComponent(defaultBranch)}`);
+  const commit = branch?.commit?.sha;
+  if (!text(commit)) throw new Error(`could not resolve the default branch of ${repository}`);
+  let file;
+  try {
+    file = await api("GET", `repos/${repository}/contents/${PROTECTION_FILE}?ref=${encodeURIComponent(commit)}`);
+  } catch (error) {
+    if (!missing(error)) throw error;
+    return { declarations: structuredClone(DEFAULT_DECLARATIONS), source: "built-in defaults", commit };
+  }
+  if (file?.type !== "file" || file.encoding !== "base64" || typeof file.content !== "string") throw new Error(`could not read ${PROTECTION_FILE}`);
+  let declarations;
+  try { declarations = JSON.parse(Buffer.from(file.content, "base64").toString("utf8")); }
+  catch { throw new Error(`invalid JSON in ${PROTECTION_FILE}`); }
+  return { declarations: validateDeclarations(declarations, defaultBranch), source: PROTECTION_FILE, commit };
 }
 
 /**
@@ -76,6 +132,10 @@ export function describePolicyChanges(existing, desired) {
   const changes = [];
   if (existing.enforcement !== desired.enforcement) changes.push(`enforcement ${existing.enforcement} -> ${desired.enforcement}`);
   if (paths(existing) !== paths(desired)) changes.push(`workflows ${paths(existing)} -> ${paths(desired)}`);
+  const excluded = policy => [...(policy.conditions?.workflow_path?.exclude ?? [])].sort().join(", ") || "none";
+  if (excluded(existing) !== excluded(desired)) changes.push(`excluded workflows ${excluded(existing)} -> ${excluded(desired)}`);
+  const types = policy => (policy.rules ?? []).map(rule => rule.type).sort().join(", ");
+  if (types(existing) !== types(desired)) changes.push(`rules ${types(existing)} -> ${types(desired)}`);
   if (events(existing) !== events(desired)) changes.push(`events ${events(existing)} -> ${events(desired)}`);
   return changes;
 }
@@ -83,9 +143,30 @@ export function describePolicyChanges(existing, desired) {
 const refs = (ruleset, defaultBranch) => (ruleset?.conditions?.ref_name?.include ?? [])
   .map(ref => ref === DEFAULT_BRANCH ? `refs/heads/${defaultBranch}` : ref).sort().join(",");
 
-/** The live ruleset that governs the same refs as `desired`, whatever it is called. */
+const sameRefs = (existing, desired, defaultBranch) => existing.target === desired.target && refs(existing, defaultBranch) === refs(desired, defaultBranch);
+const sameName = (existing, desired) => existing.target === desired.target && existing.name === desired.name;
+
+/** Prefer the ruleset governing the same refs, falling back to its desired name. */
 export function findLiveRuleset(live, desired, defaultBranch) {
-  return live.find(ruleset => ruleset.target === desired.target && refs(ruleset, defaultBranch) === refs(desired, defaultBranch)) ?? null;
+  return live.find(ruleset => sameRefs(ruleset, desired, defaultBranch))
+    ?? live.find(ruleset => sameName(ruleset, desired)) ?? null;
+}
+
+/** Reserve all exact-ref matches before any name fallback; one live ID has exactly one owner. */
+function assignLiveRulesets(live, desiredRulesets, defaultBranch) {
+  const remaining = new Map(live.map(ruleset => [ruleset.id, ruleset]));
+  const assigned = new Map();
+  for (const matches of [sameRefs, sameName]) {
+    for (const desired of desiredRulesets) {
+      if (assigned.has(desired)) continue;
+      const existing = [...remaining.values()].find(ruleset => matches(ruleset, desired, defaultBranch));
+      if (existing) {
+        assigned.set(desired, existing);
+        remaining.delete(existing.id);
+      }
+    }
+  }
+  return desiredRulesets.map(desired => ({ desired, existing: assigned.get(desired) ?? null }));
 }
 
 const contexts = parameters => (parameters?.required_status_checks ?? []).map(check => check.context);
@@ -100,6 +181,8 @@ export function describeChanges(existing, desired, defaultBranch) {
   const bypass = list => (list ?? []).map(actor => `${actor.actor_type}:${actor.actor_id}:${actor.bypass_mode}`).sort().join(", ") || "none";
   if (bypass(existing.bypass_actors) !== bypass(desired.bypass_actors)) changes.push(`bypass ${bypass(existing.bypass_actors)} -> ${bypass(desired.bypass_actors)}`);
   if (refs(existing, defaultBranch) !== refs(desired, defaultBranch)) changes.push(`refs ${refs(existing, defaultBranch)} -> ${refs(desired, defaultBranch)}`);
+  const excluded = ruleset => [...(ruleset.conditions?.ref_name?.exclude ?? [])].sort().join(", ") || "none";
+  if (excluded(existing) !== excluded(desired)) changes.push(`excluded refs ${excluded(existing)} -> ${excluded(desired)}`);
   const types = list => (list ?? []).map(item => item.type).sort().join(", ");
   if (types(existing.rules) !== types(desired.rules)) changes.push(`rules ${types(existing.rules) || "none"} -> ${types(desired.rules)}`);
   for (const wanted of desired.rules) {
@@ -121,72 +204,102 @@ function keepCheckSources(desired, existing) {
   } }) };
 }
 
-/**
- * Compare a repository's rulesets with its declaration and, with `apply`, make them match.
- * A live ruleset that is not declared is reported and never changed or deleted.
- */
-export async function protectRepository({ repository, apply = false, api = defaultApi, declarations }) {
-  const declared = (declarations ?? await loadDeclarations())[repository];
-  if (!declared) throw new Error(`${repository} is not declared in protection/repositories.json`);
-  const defaultBranch = (await api("GET", `repos/${repository}`)).default_branch;
+/** Read every page so a later existing policy cannot be mistaken for missing protection. */
+async function readPages(api, path, key) {
+  const all = [];
+  for (let page = 1; ; page++) {
+    const response = await api("GET", `${path}?per_page=100&page=${page}`);
+    const items = key ? response?.[key] : response;
+    if (!Array.isArray(items)) throw new Error(`invalid response from ${path}`);
+    all.push(...items);
+    if (key && response.total_count > all.length) {
+      if (!items.length) throw new Error(`incomplete response from ${path}`);
+    } else if (items.length < 100) return all;
+  }
+}
+
+async function readRulesets(api, repository) {
   const live = [];
-  for (const entry of await api("GET", `repos/${repository}/rulesets`)) live.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
+  for (const entry of await readPages(api, `repos/${repository}/rulesets`)) live.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
+  return live;
+}
+
+/** Compare everything before writing anything. Existing live protection needs explicit consent to change. */
+export async function protectRepository({ repository, apply = false, allowRuleChanges = false, api = defaultApi, declarations }) {
+  if (allowRuleChanges && !apply) throw new Error("--allow-rule-changes requires --apply");
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("repository must be owner/name");
+  const defaultBranch = (await api("GET", `repos/${repository}`)).default_branch;
+  const configuration = declarations
+    ? { declarations: validateDeclarations(declarations, defaultBranch), source: "provided declarations", commit: null }
+    : await loadProtection({ repository, defaultBranch, api });
+  const declared = configuration.declarations;
+  const live = await readRulesets(api, repository);
+  const policies = await readPages(api, `repos/${repository}/actions/policies`, "policies");
   const managed = new Set();
-  const rulesets = [];
-  for (const declaration of declared.filter(item => item.kind === "workflow-events")) {
-    const desired = buildEventPolicy(declaration);
-    const policies = (await api("GET", `repos/${repository}/actions/policies`))?.policies ?? [];
-    // Protocol: the list omits conditions and rules, so the matching policy is read in full before comparing.
-    const listed = policies.find(policy => policy.name === desired.name) ?? null;
-    const existing = listed ? await api("GET", `repos/${repository}/actions/policies/${listed.id}`) : null;
-    const changes = describePolicyChanges(existing, desired);
-    if (apply && changes.length > 0) {
-      if (existing) await api("PUT", `repos/${repository}/actions/policies/${existing.id}`, desired);
-      else await api("POST", `repos/${repository}/actions/policies`, desired);
-    }
-    rulesets.push({ name: `Actions policy ${desired.name}`, changes });
-  }
-  for (const declaration of declared.filter(item => item.kind !== "workflow-events")) {
-    const desired = buildRuleset(declaration, defaultBranch);
-    const existing = findLiveRuleset(live, desired, defaultBranch);
+  const operations = [];
+  const eventDeclaration = declared.find(item => item.kind === "workflow-events");
+  const desiredPolicy = buildEventPolicy(eventDeclaration);
+  // Protocol: the list omits conditions and rules; read the matching policy in full.
+  const listed = policies.find(policy => policy.name === desiredPolicy.name);
+  const existingPolicy = listed ? await api("GET", `repos/${repository}/actions/policies/${listed.id}`) : null;
+  operations.push({ name: `Actions policy ${desiredPolicy.name}`, existing: existingPolicy, desired: desiredPolicy,
+    path: `repos/${repository}/actions/policies`, changes: describePolicyChanges(existingPolicy, desiredPolicy) });
+  const desiredRulesets = declared.filter(item => item.kind !== "workflow-events").map(declaration => buildRuleset(declaration, defaultBranch));
+  for (const { desired, existing } of assignLiveRulesets(live, desiredRulesets, defaultBranch)) {
     if (existing) managed.add(existing.id);
-    const changes = describeChanges(existing, desired, defaultBranch);
-    if (apply && changes.length > 0) {
-      const body = keepCheckSources(desired, existing);
-      if (existing) await api("PUT", `repos/${repository}/rulesets/${existing.id}`, body);
-      else await api("POST", `repos/${repository}/rulesets`, body);
-    }
-    rulesets.push({ name: desired.name, changes });
+    operations.push({ name: desired.name, existing, desired: keepCheckSources(desired, existing),
+      path: `repos/${repository}/rulesets`, changes: describeChanges(existing, desired, defaultBranch) });
   }
-  const notes = live.filter(ruleset => !managed.has(ruleset.id)).map(ruleset => `ruleset ${ruleset.name} is not declared and was left alone`);
-  // Invariant: a classic rule is removed only after a fresh read shows the declared ruleset active on that
-  // branch, so the branch is never left without protection.
-  const branches = [defaultBranch, ...declared.filter(declaration => declaration.kind === "branch").map(declaration => declaration.branch)];
-  for (const branch of branches) {
-    const path = `repos/${repository}/branches/${branch}/protection`;
-    if (!await api("GET", path).catch(() => null)) continue;
-    if (!apply) { notes.push(`the classic branch protection rule on ${branch} duplicates the ruleset and would be removed`); continue; }
-    const desired = buildRuleset(declared.find(declaration => declaration.kind === (branch === defaultBranch ? "default-branch" : "branch") && (branch === defaultBranch || declaration.branch === branch)), defaultBranch);
-    const current = [];
-    for (const entry of await api("GET", `repos/${repository}/rulesets`)) current.push(await api("GET", `repos/${repository}/rulesets/${entry.id}`));
-    const installed = findLiveRuleset(current, desired, defaultBranch);
+  const notes = [
+    ...live.filter(ruleset => !managed.has(ruleset.id)).map(ruleset => `ruleset ${ruleset.name} is not declared and was left alone`),
+    ...policies.filter(policy => policy.id !== listed?.id).map(policy => `Actions policy ${policy.name} is not declared and was left alone`),
+  ];
+  const classic = [];
+  for (const declaration of declared.filter(item => ["default-branch", "branch"].includes(item.kind))) {
+    const branch = declaration.kind === "default-branch" ? defaultBranch : declaration.branch;
+    const path = `repos/${repository}/branches/${encodeURIComponent(branch)}/protection`;
+    try { await api("GET", path); }
+    catch (error) { if (missing(error)) continue; throw error; }
+    classic.push({ branch, path, desired: buildRuleset(declaration, defaultBranch) });
+  }
+  const conflicts = [
+    ...operations.filter(operation => operation.existing && operation.changes.length).map(operation => operation.name),
+    ...classic.map(item => `classic protection on ${item.branch}`),
+  ];
+  const blocked = conflicts.length > 0 && !allowRuleChanges;
+  if (apply && !blocked) {
+    for (const operation of operations.filter(operation => operation.changes.length)) {
+      const { existing, desired, path } = operation;
+      await api(existing ? "PUT" : "POST", existing ? `${path}/${existing.id}` : path, desired);
+    }
+  }
+  // Even with consent, classic protection is removed only after a fresh read confirms a matching active ruleset.
+  for (const { branch, path, desired } of classic) {
+    if (!apply || blocked) { notes.push(`classic protection on ${branch} would be removed only with --apply --allow-rule-changes`); continue; }
+    const installed = findLiveRuleset(await readRulesets(api, repository), desired, defaultBranch);
     if (installed?.enforcement === "active" && describeChanges(installed, desired, defaultBranch).length === 0) {
       await api("DELETE", path);
       notes.push(`removed the classic branch protection rule on ${branch}; ${desired.name} protects it`);
     } else notes.push(`kept the classic branch protection rule on ${branch}: ${desired.name} is not confirmed active`);
   }
-  return { repository, rulesets, applied: apply, notes };
+  return { repository, rulesets: operations.map(({ name, changes }) => ({ name, changes })),
+    applied: apply && !blocked, blocked, conflicts, notes, configuration };
 }
 
 export function formatProtection(result) {
   const pending = result.rulesets.some(ruleset => ruleset.changes.length > 0);
   return [
     `${result.repository}`,
+    `  configuration: ${result.configuration.source}${result.configuration.commit ? ` at ${result.configuration.commit}` : ""}`,
     ...result.rulesets.flatMap(ruleset => ruleset.changes.length === 0
       ? [`  ${ruleset.name}: matches`]
-      : [`  ${ruleset.name}: ${result.applied ? "updated" : "would change"}`, ...ruleset.changes.map(change => `    - ${change}`)]),
+      : [`  ${ruleset.name}: ${result.blocked ? "blocked" : result.applied ? "updated" : "would create"}`, ...ruleset.changes.map(change => `    - ${change}`)]),
     ...result.notes.map(note => `  note: ${note}`),
-    ...(pending && !result.applied ? ["Nothing was changed. Run again with --apply to make these changes."] : []),
+    ...(result.blocked ? [
+      `Live protection differs: ${result.conflicts.join(", ")}.`,
+      "Nothing was changed. Add or correct .github/protection.json on the default branch to preserve live rules.",
+      "Deliberate live changes require both --apply and --allow-rule-changes.",
+    ] : pending && !result.applied ? ["Nothing was changed. Run again with --apply to install missing protection."] : []),
   ].join("\n");
 }
 
@@ -195,6 +308,11 @@ async function defaultApi(method, path, body) {
   const version = path.includes("/actions/policies") ? ["-H", "X-GitHub-Api-Version: 2026-03-10"] : [];
   const child = run("gh", ["api", "-X", method, ...version, path, ...(body ? ["--input", "-"] : [])], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
   if (body) child.child.stdin.end(JSON.stringify(body));
-  const { stdout } = await child;
-  return stdout.trim() ? JSON.parse(stdout) : null;
+  try {
+    const { stdout } = await child;
+    return stdout.trim() ? JSON.parse(stdout) : null;
+  } catch (error) {
+    error.status = Number(error.stderr?.match(/\(HTTP (\d{3})\)/)?.[1]) || undefined;
+    throw error;
+  }
 }

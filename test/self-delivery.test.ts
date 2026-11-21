@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { DELIVERY_CHECK, buildEventPolicy, buildRuleset, loadDeclarations } from "../scripts/repository-protection.mjs";
+import { DELIVERY_CHECK, buildEventPolicy, buildRuleset, validateDeclarations } from "../scripts/repository-protection.mjs";
 
 /** A workflow file without its comment lines and its display name. */
 const settings = (text: string) => text.replace(/\r\n/g, "\n").split("\n")
@@ -21,7 +21,7 @@ describe("this repository's own delivery", () => {
   });
 
   it("protects main with the delivery check, squash merges only, and lets the caller's events run", async () => {
-    const declared = (await loadDeclarations())["timurproko/MyWorkflows"] as any[];
+    const declared = validateDeclarations(JSON.parse(await readFile(".github/protection.json", "utf8")), "main") as any[];
     const rules = buildRuleset(declared.find(item => item.kind === "default-branch"), "main").rules;
     expect(rules.find(rule => rule.type === "required_status_checks").parameters.required_status_checks.map((check: any) => check.context))
       .toEqual(["Delivery tooling tests", DELIVERY_CHECK]);

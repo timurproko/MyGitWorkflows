@@ -20,8 +20,9 @@ for that PR, and only with green CI on its current head.
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
 2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml`, unchanged.
-3. Declare the repository in `protection/repositories.json` and run `delivery protect --repo <owner/name> --apply`:
-   the default branch then requires the repository's own test check and `delivery / Delivery check`.
+3. Name your CI gate `CI required`, then run `delivery protect --repo <owner/name>` to inspect protection.
+   Use `--apply` to install missing protection: the default branch requires `CI required` and
+   `delivery / Delivery check`, squash merges only, and linear history. No repository registration or file is needed.
 4. Run `delivery instructions --apply` to write `AGENTS.md` (the shared template) and `CLAUDE.md` (`@AGENTS.md`).
    Move anything else agents were told into `docs/` and delete the old instruction files.
 5. Copy `templates/workflow-bootstrap.mjs` to `scripts/workflow-bootstrap.mjs` and run it from the package manager's
@@ -29,7 +30,8 @@ for that PR, and only with green CI on its current head.
    hooks. Any agent that installs dependencies or pushes then gets the shared workflow on a machine that lacks it,
    and a current copy on one that has it. It does nothing on CI runners and never fails the command that runs it.
 
-The target branch is the repository's default branch. Nothing else is configured per repository.
+The target branch is the repository's default branch. Only repositories that need different protection add the
+optional override described below.
 
 ## Local setup, once per machine
 
@@ -77,7 +79,7 @@ A task's checkout comes only from `delivery start`. Two things hold agents to th
 | `delivery openspec <arguments>` | Run OpenSpec at the version this repository pins |
 | `delivery instructions` | Report agent instruction files that differ from `templates/AGENTS.md`; `--apply` writes `AGENTS.md` and `CLAUDE.md` |
 | `delivery bootstrap` | What a repository's bootstrap file runs: download if missing, update hourly, relink only what is absent; silent when nothing changes and never fails |
-| `delivery protect --repo <owner/name>` | Compare the repository rulesets with their declaration; `--apply` sets them |
+| `delivery protect --repo <owner/name>` | Compare live protection with defaults or the repository's override; `--apply` installs missing protection, and existing changes also need `--allow-rule-changes` |
 
 ## The OpenSpec version
 
@@ -95,24 +97,53 @@ delivery bot does both.
 
 ## Branch and tag protection
 
-`protection/repositories.json` declares the GitHub rulesets of every repository. `delivery protect --repo <owner/name>`
-shows how the live rulesets differ from that declaration, and `--apply` makes them match. To change protection,
-edit the file, merge it, and apply again; nothing is configured by hand in GitHub.
+`delivery protect --repo <owner/name>` works for any repository without an entry in this project. Its built-in
+policy requires `CI required` and `delivery / Delivery check` on the actual default branch, with strict/up-to-date
+checks, pull requests, resolved review threads, squash merges only, linear history, no deletion or force push,
+and repository-admin bypass for pull requests only. The `allow-delivery-events` Actions policy permits
+`.github/workflows/delivery.yml` on exactly `pull_request_target` and `workflow_dispatch`.
+
+### Optional repository override
+
+Only a repository that differs adds `.github/protection.json` to its own default branch. The file is a JSON
+array of declarations: the same shape as an entry in the former inventory, but without an `owner/name` key.
+A present file replaces the whole default array; fields and arrays are not merged with defaults. Include exactly
+one `default-branch` and one `workflow-events`, plus any extra branch or release-tag declarations. Omitted
+`mergeMethods` means squash only; omitted `linearHistory` means false; omitted `checks` means no additional CI
+checks, and the delivery check remains unless `delivery` is false. See [this repository's override](.github/protection.json)
+and the [exact a1 migration file](docs/protection-migration.md).
+
+The command reads the file from GitHub, pinned to the resolved default-branch commit, and reports the source and
+commit. Local files and unmerged branches are deliberately ignored, so running from another checkout cannot
+change the policy for `--repo`. Only a missing file selects defaults; malformed JSON, invalid declarations and
+API errors fail closed. Supported fields are:
 
 | Kind | Ruleset name | What it enforces |
 | --- | --- | --- |
 | `default-branch` | `protect-<default branch>` | No deletion or force push, pull request required, the repository's test checks plus `delivery / Delivery check`, branch up to date, and the repository admin may bypass for pull requests only. Options: `checks`, `mergeMethods`, `linearHistory`, `delivery: false` until the repository calls the shared workflow. |
-| `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. |
-| `release-tags` | `protect-release-tags` | No deletion or movement of `v*` tags except by the listed release Apps. |
-| `workflow-events` | Actions policy `allow-delivery-events` | A public repository runs `pull_request_target` only where a policy allows it. This lets exactly the listed workflow files run on exactly the listed events. |
+| `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. Required field: `branch`. |
+| `release-tags` | `protect-release-tags` | No deletion or movement of tags except by the release Apps. Options: `pattern` (default `v*`), `bypassApps` (numeric App IDs). |
+| `workflow-events` | Actions policy `allow-delivery-events` | A public repository runs `pull_request_target` only where a policy allows it. Required arrays: `workflows` (paths in `.github/workflows/`) and `events`. |
 
-An existing ruleset that governs the same refs is renamed and updated in place. An older classic branch protection
-rule on a declared branch is removed once the ruleset is confirmed active. A ruleset that is not declared is
-reported and left alone.
+### Applying safely
 
-GitHub offers rulesets on a private repository only on a paid plan. The private workspace repository of
-`timurproko/xrbuild` is therefore not declared: it runs the same delivery workflow and the same checks, and they
-advise without blocking a merge.
+Report mode never writes. It exits nonzero when existing managed protection differs, displays those differences
+as blocked, and asks you to add or correct the override rather than silently replacing live rules with defaults.
+Merge the override before running the command again.
+
+`--apply` alone can create missing protection and is a no-op when everything matches. Any change to an existing
+managed ruleset or Actions policy requires `--apply --allow-rule-changes`; use that combination only for a
+deliberate policy change, not to work around a missing override. The complete comparison, including classic
+protection reads, finishes before the first write. A conflict blocks all writes without explicit consent.
+
+With consent, an existing ruleset governing the same refs is updated in place, retaining required-check App pins.
+Classic branch-protection deletion also requires consent and a fresh read confirming the matching ruleset is
+active. Unmanaged rulesets and Actions policies are reported and left alone. The migration's
+[ordering](docs/protection-migration.md) preserves existing protection while a1 adds its separate override.
+
+GitHub offers rulesets on a private repository only on a paid plan. The private xrbuild workspace can run the
+same delivery workflow and checks without rulesets, but they advise without blocking a merge; this command
+does not bypass GitHub's plan or permission restrictions.
 
 ## Layout
 
