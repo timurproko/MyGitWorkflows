@@ -22,16 +22,16 @@ const legacyTags = { id: 9, name: "old-protect-release-tags", target: "tag", enf
   conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } }, rules: [{ type: "deletion" }, { type: "non_fast_forward" }] };
 const stray = { id: 11, name: "experiment", target: "branch", enforcement: "active", bypass_actors: [], conditions: { ref_name: { include: ["refs/heads/experiment"], exclude: [] } }, rules: [{ type: "deletion" }] };
 const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
-const standard = (list = declarations) => list.filter(item => item.kind !== "workflow-events").map((item, index) => ({ ...buildRuleset(item, "develop"), id: index + 1 }));
+const standard = (list = declarations, defaultBranch = "develop") => list.filter(item => item.kind !== "workflow-events").map((item, index) => ({ ...buildRuleset(item, defaultBranch), id: index + 1 }));
 
-function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEventPolicy(events), id: 3 }] as any[], file = undefined as any, fileError = undefined as any, repository = "o/r" } = {}) {
+function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEventPolicy(events), id: 3 }] as any[], file = undefined as any, fileError = undefined as any, repository = "o/r", defaultBranch = "develop" } = {}) {
   const calls: Array<[string, string, any?]> = [];
   const root = `repos/${repository}`;
   const api = async (method: string, path: string, body?: unknown) => {
     calls.push([method, path, body]);
     if (method !== "GET") return {};
-    if (path === root) return { default_branch: "develop" };
-    if (path === `${root}/branches/develop`) return { commit: { sha: "default-sha" } };
+    if (path === root) return { default_branch: defaultBranch };
+    if (path === `${root}/branches/${encodeURIComponent(defaultBranch)}`) return { commit: { sha: "default-sha" } };
     if (path === `${root}/contents/${PROTECTION_FILE}?ref=default-sha`) {
       if (fileError) throw fileError;
       if (file === undefined) throw httpError(404);
@@ -41,7 +41,7 @@ function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEve
     if (path.startsWith(`${root}/actions/policies?`)) return { total_count: policies.length, policies: policies.slice((page - 1) * 100, page * 100).map(({ id, name, enforcement }) => ({ id, name, enforcement })) };
     if (path.startsWith(`${root}/actions/policies/`)) return policies.find(policy => path.endsWith(`/${policy.id}`));
     if (path.startsWith(`${root}/rulesets?`)) return rulesets.slice((page - 1) * 100, page * 100).map(({ id, name }) => ({ id, name }));
-    if (path.endsWith("/protection")) { if (classic && path.includes("/branches/develop/")) return {}; throw httpError(404); }
+    if (path.endsWith("/protection")) { if (classic && path.includes(`/branches/${encodeURIComponent(defaultBranch)}/`)) return {}; throw httpError(404); }
     const ruleset = rulesets.find(ruleset => path === `${root}/rulesets/${ruleset.id}`);
     if (ruleset) return ruleset;
     throw new Error(`unexpected API call: ${method} ${path}`);
@@ -139,6 +139,56 @@ describe("repository protection configuration", () => {
     ]);
     expect(buildRuleset(own[0], "main").rules.some(rule => rule.type === "required_linear_history")).toBe(false);
     await expect(readFile("protection/repositories.json", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("existing repository migration", () => {
+  const originalDefaults = [
+    { kind: "default-branch", checks: ["CI required"], mergeMethods: ["squash"], linearHistory: true },
+    { kind: "workflow-events", workflows: [".github/workflows/delivery.yml"], events: ["pull_request_target", "workflow_dispatch"] },
+  ];
+
+  it.each(["timurproko/crew", "timurproko/xrbuild", "timurproko/herdr-app"])("preserves the original declarations for %s without a file", async repository => {
+    // These are the old inventory's declarations, independent of the new default constant.
+    const live = fake(standard(originalDefaults, "main"), { repository, defaultBranch: "main", policies: [{ ...buildEventPolicy(originalDefaults[1]), id: 3 }] });
+    const report = await protectRepository({ repository, api: live.api });
+    expect(report.configuration.source).toBe("built-in defaults");
+    expect(report.blocked).toBe(false);
+    expect(report.rulesets.map(item => [item.name, item.changes])).toEqual([["Actions policy allow-delivery-events", []], ["protect-main", []]]);
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("preserves MyWorkflows' own check, self-delivery workflow and non-linear-history policy", async () => {
+    const own = JSON.parse(await readFile(PROTECTION_FILE, "utf8"));
+    const live = fake(standard(own, "main"), { repository: "timurproko/MyWorkflows", defaultBranch: "main", file: remoteFile(own), policies: [{ ...buildEventPolicy(own[1]), id: 3 }] });
+    const report = await protectRepository({ repository: "timurproko/MyWorkflows", api: live.api });
+    expect(report.configuration.source).toBe(PROTECTION_FILE);
+    expect(report.rulesets.every(item => item.changes.length === 0)).toBe(true);
+    expect(buildRuleset(own[0], "main").rules.some(rule => rule.type === "required_linear_history")).toBe(false);
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("publishes the exact approved a1 file and preserves every exceptional ruleset and workflow event", async () => {
+    const migration = await readFile("docs/protection-migration.md", "utf8");
+    const a1 = JSON.parse(migration.match(/```json\n([\s\S]*?)\n```/)![1]!);
+    const plan = await readFile("docs/plans/protect-defaults.md", "utf8");
+    const approved = JSON.parse([...plan.matchAll(/```json\n([\s\S]*?)\n```/g)].at(-1)![1]!);
+    expect(a1).toEqual(approved);
+    expect(a1).toEqual([
+      { kind: "default-branch", checks: ["Development validation required"], mergeMethods: ["merge", "squash"] },
+      { kind: "branch", branch: "master" },
+      { kind: "release-tags", pattern: "v*", bypassApps: [4942462] },
+      { kind: "workflow-events", workflows: [".github/workflows/delivery.yml", ".github/workflows/release-reopening-auto-merge.yml"], events: ["pull_request_target", "workflow_run", "workflow_dispatch"] },
+    ]);
+    const live = fake(standard(a1), { file: remoteFile(a1), policies: [{ ...buildEventPolicy(a1[3]), id: 3 }] });
+    const report = await protectRepository({ repository: "o/r", api: live.api });
+    expect(report.rulesets.map(item => [item.name, item.changes])).toEqual([
+      ["Actions policy allow-delivery-events", []], ["protect-develop", []], ["protect-master", []], ["protect-release-tags", []],
+    ]);
+    const branch = buildRuleset(a1[0], "develop");
+    expect(branch.rules.some(rule => rule.type === "required_linear_history")).toBe(false);
+    expect(branch.rules.at(-1)!.parameters.required_status_checks).toEqual([{ context: "Development validation required" }, { context: DELIVERY_CHECK }]);
+    expect(live.writes()).toEqual([]);
   });
 });
 

@@ -1,5 +1,9 @@
 # Adopt herdr-app protection
 
+> Historical plan, completed before repository-independent defaults. The former central inventory mentioned
+> below no longer exists. New adopters name their gate `CI required` and use `delivery protect`; see the
+> current [README](../../README.md#branch-and-tag-protection). No inventory edit is required.
+
 ## Proposal
 
 Declare the newly seeded public repository `timurproko/herdr-app` in the shared protection inventory, matching `timurproko/crew`. The application source remains outside this change and will be imported separately.
