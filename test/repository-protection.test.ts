@@ -37,9 +37,10 @@ function fake(rulesets: any[] = [], { classic = false, policies = [{ ...buildEve
       if (file === undefined) throw httpError(404);
       return file;
     }
-    if (path === `${root}/actions/policies`) return { total_count: policies.length, policies: policies.map(({ id, name, enforcement }) => ({ id, name, enforcement })) };
+    const page = Number(new URLSearchParams(path.split("?")[1]).get("page") ?? 1);
+    if (path.startsWith(`${root}/actions/policies?`)) return { total_count: policies.length, policies: policies.slice((page - 1) * 100, page * 100).map(({ id, name, enforcement }) => ({ id, name, enforcement })) };
     if (path.startsWith(`${root}/actions/policies/`)) return policies.find(policy => path.endsWith(`/${policy.id}`));
-    if (path === `${root}/rulesets`) return rulesets.map(({ id, name }) => ({ id, name }));
+    if (path.startsWith(`${root}/rulesets?`)) return rulesets.slice((page - 1) * 100, page * 100).map(({ id, name }) => ({ id, name }));
     if (path.endsWith("/protection")) { if (classic && path.includes("/branches/develop/")) return {}; throw httpError(404); }
     const ruleset = rulesets.find(ruleset => path === `${root}/rulesets/${ruleset.id}`);
     if (ruleset) return ruleset;
@@ -141,6 +142,106 @@ describe("repository protection configuration", () => {
   });
 });
 
+describe("protection preflight", () => {
+  it("blocks every write when an existing ruleset conflicts, even if the Actions policy could be created first", async () => {
+    const live = fake([legacyDefault, legacyTags, stray], { policies: [] });
+    const result = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(result.blocked).toBe(true);
+    expect(result.applied).toBe(false);
+    expect(result.conflicts).toEqual(["protect-develop"]);
+    expect(live.writes()).toEqual([]);
+    const output = formatProtection(result);
+    expect(output).toContain("protect-develop: blocked");
+    expect(output).toContain("--apply and --allow-rule-changes");
+    expect(output).not.toContain("Run again with --apply");
+  });
+
+  it("reports a missing-file a1-like policy conflict instead of treating defaults as safe to apply", async () => {
+    const ownEvents = { ...events, workflows: [...events.workflows, ".github/workflows/release-reopening-auto-merge.yml"], events: [...events.events, "workflow_run"] };
+    const live = fake(standard(), { policies: [{ ...buildEventPolicy(ownEvents), id: 3 }] });
+    const report = await protectRepository({ repository: "o/r", api: live.api });
+    expect(report.blocked).toBe(true);
+    expect(report.conflicts).toEqual(["Actions policy allow-delivery-events", "protect-develop"]);
+    expect(report.rulesets.every(item => item.changes.length > 0)).toBe(true);
+    expect(live.writes()).toEqual([]);
+    expect(formatProtection(report)).toContain("Nothing was changed. Add or correct .github/protection.json");
+  });
+
+  it("blocks rule creation when an existing Actions policy differs", async () => {
+    const live = fake([], { policies: [{ ...buildEventPolicy(events), id: 3, enforcement: "disabled" }] });
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.conflicts).toEqual(["Actions policy allow-delivery-events"]);
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("requires explicit consent for classic protection deletion and blocks other writes too", async () => {
+    const live = fake([], { classic: true, policies: [] });
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.conflicts).toEqual(["classic protection on develop"]);
+    expect(live.writes()).toEqual([]);
+    expect(report.notes).toContain("classic protection on develop would be removed only with --apply --allow-rule-changes");
+  });
+
+  it("fails closed on a late classic-protection read error before creating any policies or rulesets", async () => {
+    const live = fake([], { policies: [] });
+    const api = async (method: string, path: string, body?: unknown) => {
+      if (path.endsWith("/protection")) throw httpError(403);
+      return live.api(method, path, body);
+    };
+    await expect(protectRepository({ repository: "o/r", api, apply: true })).rejects.toThrow("HTTP 403");
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("rejects the consent flag without apply before reading GitHub", async () => {
+    const live = fake();
+    await expect(protectRepository({ repository: "o/r", api: live.api, allowRuleChanges: true })).rejects.toThrow("--allow-rule-changes requires --apply");
+    expect(live.calls).toEqual([]);
+  });
+
+  it("guards unknown live rule types and exclusions rather than silently dropping them", async () => {
+    const branch = buildRuleset(DEFAULT_DECLARATIONS[0], "develop");
+    const existing = { ...branch, id: 1, rules: [...branch.rules, { type: "required_signatures" }], conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: ["refs/heads/other"] } } };
+    const live = fake([existing]);
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.blocked).toBe(true);
+    expect(report.rulesets[1].changes.join("\n")).toContain("required_signatures");
+    expect(report.rulesets[1].changes.join("\n")).toContain("excluded refs");
+    expect(live.writes()).toEqual([]);
+    const policy = buildEventPolicy(events);
+    const policyChanges = describePolicyChanges({ ...policy, rules: [...policy.rules, { type: "unknown" }], conditions: { workflow_path: { ...policy.conditions.workflow_path, exclude: ["ignored.yml"] } } }, policy);
+    expect(policyChanges.join("\n")).toContain("excluded workflows");
+    expect(policyChanges.join("\n")).toContain("unknown");
+  });
+
+  it("finds a same-name ruleset with changed refs and refuses an unguarded replacement", async () => {
+    const branch = buildRuleset(DEFAULT_DECLARATIONS[0], "develop");
+    const live = fake([{ ...branch, id: 1, conditions: { ref_name: { include: ["refs/heads/other"], exclude: [] } } }]);
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.blocked).toBe(true);
+    expect(report.rulesets[1].changes).toContain("refs refs/heads/other -> refs/heads/develop");
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("reads later pages before deciding existing protection is missing", async () => {
+    const extra = Array.from({ length: 100 }, (_, index) => ({ ...stray, id: index + 100, name: `unmanaged-${index}` }));
+    const live = fake([...extra, ...standard(DEFAULT_DECLARATIONS)], { policies: [...extra, { ...buildEventPolicy(events), id: 3 }] });
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.blocked).toBe(false);
+    expect(report.rulesets.every(item => item.changes.length === 0)).toBe(true);
+    expect(report.notes).toHaveLength(200);
+    expect(live.writes()).toEqual([]);
+    expect(live.calls.some(([, path]) => path === "repos/o/r/rulesets?per_page=100&page=2")).toBe(true);
+    expect(live.calls.some(([, path]) => path === "repos/o/r/actions/policies?per_page=100&page=2")).toBe(true);
+  });
+
+  it("reports unmanaged Actions policies without modifying them", async () => {
+    const live = fake(standard(DEFAULT_DECLARATIONS), { policies: [{ ...buildEventPolicy(events), id: 3 }, { id: 4, name: "other" }] });
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.notes).toEqual(["Actions policy other is not declared and was left alone"]);
+    expect(live.writes()).toEqual([]);
+  });
+});
+
 describe("repository protection", () => {
   it("builds the three ruleset kinds with generic names and existing field semantics", () => {
     const [main, master, tags] = standard();
@@ -175,7 +276,7 @@ describe("repository protection", () => {
 
   it("applies in place, creates missing rulesets, and retains check integration pins", async () => {
     const live = fake([legacyDefault, legacyTags, stray]);
-    await protectRepository({ repository: "o/r", api: live.api, declarations, apply: true });
+    await protectRepository({ repository: "o/r", api: live.api, declarations, apply: true, allowRuleChanges: true });
     const writes = live.writes();
     expect(writes.map(([method, path]) => `${method} ${path}`)).toEqual(["PUT repos/o/r/rulesets/7", "POST repos/o/r/rulesets", "PUT repos/o/r/rulesets/9"]);
     expect(writes[0]![2].rules.at(-1).parameters.required_status_checks).toEqual([{ context: "Tests required", integration_id: 15368 }, { context: DELIVERY_CHECK }]);
@@ -190,11 +291,11 @@ describe("repository protection", () => {
 
   it("removes classic protection only when a fresh read confirms a matching active ruleset", async () => {
     const ready = fake(standard(), { classic: true });
-    const done = await protectRepository({ repository: "o/r", api: ready.api, declarations, apply: true });
+    const done = await protectRepository({ repository: "o/r", api: ready.api, declarations, apply: true, allowRuleChanges: true });
     expect(ready.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["DELETE repos/o/r/branches/develop/protection"]);
     expect(done.notes).toEqual(["removed the classic branch protection rule on develop; protect-develop protects it"]);
     const stale = fake([legacyDefault, legacyTags], { classic: true });
-    const kept = await protectRepository({ repository: "o/r", api: stale.api, declarations, apply: true });
+    const kept = await protectRepository({ repository: "o/r", api: stale.api, declarations, apply: true, allowRuleChanges: true });
     expect(stale.writes().some(([method]) => method === "DELETE")).toBe(false);
     expect(kept.notes).toContain("kept the classic branch protection rule on develop: protect-develop is not confirmed active");
   });
@@ -207,7 +308,7 @@ describe("repository protection", () => {
     await protectRepository({ repository: "o/r", api: fresh.api, declarations: DEFAULT_DECLARATIONS, apply: true });
     expect(fresh.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["POST repos/o/r/actions/policies", "POST repos/o/r/rulesets"]);
     const present = fake(standard(DEFAULT_DECLARATIONS), { policies: [{ ...desired, id: 3, rules: [{ type: "restrict_action_events", parameters: { allowed_events: ["pull_request_target"] } }] }] });
-    await protectRepository({ repository: "o/r", api: present.api, declarations: DEFAULT_DECLARATIONS, apply: true });
+    await protectRepository({ repository: "o/r", api: present.api, declarations: DEFAULT_DECLARATIONS, apply: true, allowRuleChanges: true });
     expect(present.writes().map(([method, path]) => `${method} ${path}`)).toEqual(["PUT repos/o/r/actions/policies/3"]);
   });
 });
